@@ -1,0 +1,8 @@
+# Ignore Firebase service account
+service-account.json
+
+# node modules
+node_modules/
+
+# logs
+npm-debug.log
