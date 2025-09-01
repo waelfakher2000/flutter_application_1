@@ -22,18 +22,40 @@ function saveDevices() {
 
 loadDevices();
 
+// Initialize Firebase Admin SDK.
+// Cloud Run: prefer SERVICE_ACCOUNT_JSON env var (full JSON string). Fallback to SERVICE_ACCOUNT_PATH file for local runs.
+const SERVICE_ACCOUNT_JSON = process.env.SERVICE_ACCOUNT_JSON;
 const SERVICE_ACCOUNT_PATH = process.env.SERVICE_ACCOUNT_PATH || path.join(__dirname, 'service-account.json');
-if (!fs.existsSync(SERVICE_ACCOUNT_PATH)) {
-  console.error('Missing Firebase service account JSON. Place it at', SERVICE_ACCOUNT_PATH, 'or set SERVICE_ACCOUNT_PATH env var.');
-  process.exit(1);
+
+if (SERVICE_ACCOUNT_JSON) {
+  try {
+    const creds = JSON.parse(SERVICE_ACCOUNT_JSON);
+    admin.initializeApp({
+      credential: admin.credential.cert(creds)
+    });
+    console.log('Firebase Admin initialized from SERVICE_ACCOUNT_JSON env var.');
+  } catch (e) {
+    console.error('Failed to parse SERVICE_ACCOUNT_JSON env var:', e);
+    process.exit(1);
+  }
+} else {
+  if (!fs.existsSync(SERVICE_ACCOUNT_PATH)) {
+    console.error('Missing Firebase service account JSON. Provide SERVICE_ACCOUNT_JSON env var or place service-account.json at', SERVICE_ACCOUNT_PATH);
+    process.exit(1);
+  }
+  try {
+    admin.initializeApp({
+      credential: admin.credential.cert(require(SERVICE_ACCOUNT_PATH))
+    });
+    console.log('Firebase Admin initialized from service account file:', SERVICE_ACCOUNT_PATH);
+  } catch (e) {
+    console.error('Failed to initialize Firebase Admin from file:', e);
+    process.exit(1);
+  }
 }
 
-admin.initializeApp({
-  credential: admin.credential.cert(require(SERVICE_ACCOUNT_PATH))
-});
-
 const MQTT_URL = process.env.MQTT_URL || 'mqtt://mqtt.mautoiot.com:1883';
-const MQTT_DEFAULT_TOPIC = process.env.MQTT_TOPIC || '#';
+const MQTT_DEFAULT_TOPIC = process.env.MQTT_TOPIC || process.env.MQTT_DEFAULT_TOPIC || '#';
 const MQTT_OPTIONS = {
   username: process.env.MQTT_USERNAME,
   password: process.env.MQTT_PASSWORD,
@@ -149,6 +171,9 @@ app.post('/unregister', (req, res) => {
 app.get('/status', (req, res) => {
   return res.json({ devices });
 });
+
+// Simple health check for Cloud Run
+app.get('/health', (req, res) => res.send('ok'));
 
 const PORT = process.env.HTTP_PORT || 3000;
 app.listen(PORT, () => console.log('HTTP API listening on', PORT));

@@ -72,3 +72,48 @@ Customizations you might want
 - Target specific tokens instead of a topic (bridge could map MQTT subtopics to device tokens via a database).
 - Add filtering or rate limiting.
 - Run on Cloud Run / a small VM for reliability.
+
+## Deploying to Google Cloud Run
+
+This repository ships a simple MQTT -> FCM bridge. To receive notifications while your laptop is off, deploy the bridge to a cloud service such as Cloud Run.
+
+Quick Cloud Run steps (gcloud installed and authenticated):
+
+1. Build and push the container (from repo root `mqtt-fcm-bridge`):
+
+```bash
+# set your project id
+gcloud config set project YOUR_PROJECT_ID
+
+# build and push
+gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/mqtt-bridge
+
+# deploy to Cloud Run
+gcloud run deploy mqtt-bridge \
+  --image gcr.io/YOUR_PROJECT_ID/mqtt-bridge \
+  --platform managed \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars="HTTP_PORT=3000"
+```
+
+2. Provide Firebase credentials to the service. Use Secret Manager or an env var. For quick testing you can set the full JSON as an env var (not recommended for production). Example when deploying:
+
+```bash
+# shorthand: set SERVICE_ACCOUNT_JSON from a local file
+SERVICE_ACCOUNT_JSON=$(cat service-account.json | sed 's/\n/\\n/g')
+
+gcloud run deploy mqtt-bridge \
+  --image gcr.io/YOUR_PROJECT_ID/mqtt-bridge \
+  --platform managed \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars="SERVICE_ACCOUNT_JSON=$SERVICE_ACCOUNT_JSON,HTTP_PORT=3000"
+```
+
+3. After deploy you'll receive a URL like `https://mqtt-bridge-xxxxx.a.run.app`. Use that URL as `bridgeUrl` in the mobile app (update DebugPage or `lib/main.dart`), then open the app on your phone and press Refresh to register.
+
+Notes
+- For production, use Secret Manager and mount the secret or inject it as a runtime secret, not raw env.
+- Ensure your Firebase service account has permissions to send FCM messages.
+- Configure MQTT host via `MQTT_URL` env var if needed.

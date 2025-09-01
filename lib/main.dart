@@ -1,145 +1,231 @@
 // main.dart
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:mqtt_client/mqtt_client.dart' as mqtt;
-
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:mqtt_client/mqtt_server_client.dart' show MqttServerClient;
-import 'package:mqtt_client/mqtt_browser_client.dart' show MqttBrowserClient;
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'tank_widget.dart';
+import 'theme_provider.dart';
+import 'types.dart';
+import 'mqtt_service.dart';
+import 'landing_page.dart';
+
+// Local notifications plugin instance
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+Future<void> initializeLocalNotifications() async {
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  const InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+  );
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+}
+
+Future<void> showLocalNotification({
+  required String title,
+  required String body,
+}) async {
+  const AndroidNotificationDetails androidPlatformChannelSpecifics = AndroidNotificationDetails(
+    'default_channel',
+    'Default',
+    channelDescription: 'Default channel for notifications',
+    importance: Importance.max,
+    priority: Priority.high,
+    showWhen: true,
+  );
+  const NotificationDetails platformChannelSpecifics = NotificationDetails(
+    android: androidPlatformChannelSpecifics,
+  );
+  await flutterLocalNotificationsPlugin.show(
+    0,
+    title,
+    body,
+    platformChannelSpecifics,
+  );
+}
+
+// Feature flag: set to true to start the native Android foreground service.
+// Set to false to disable native service startup (useful for debugging crashes).
+const bool enableNativeForegroundService = false;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Initialize Firebase for FCM
-  try {
-    await Firebase.initializeApp();
-  // background message handler
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-  } catch (e) {
-    // allow running without firebase if not configured yet
-    debugPrint('Firebase initialize error: $e');
-  }
-
-  // Load saved settings and launch correct start page
-  final prefs = await SharedPreferences.getInstance();
-  final savedBroker = prefs.getString('broker');
-  final savedPort = prefs.getInt('port');
-  final savedTopic = prefs.getString('topic');
-  final savedSensor = prefs.getString('sensor');
-  final savedTank = prefs.getString('tank');
-
-  if (savedBroker != null && savedPort != null && savedTopic != null && savedSensor != null && savedTank != null) {
-    final sensorType = SensorType.values.firstWhere(
-        (e) => e.toString() == savedSensor,
-        orElse: () => SensorType.submersible);
-    final tankType = TankType.values.firstWhere(
-        (e) => e.toString() == savedTank,
-        orElse: () => TankType.verticalCylinder);
-    final height = prefs.getDouble('height') ?? 1.0;
-    final diameter = prefs.getDouble('diameter') ?? 0.4;
-    final length = prefs.getDouble('length') ?? 1.0;
-    final width = prefs.getDouble('width') ?? 0.5;
-    final minThr = prefs.getDouble('minThreshold');
-    final maxThr = prefs.getDouble('maxThreshold');
-    final username = prefs.getString('username');
-    final password = prefs.getString('password');
-
-    runApp(MaterialApp(
-      title: 'Tank Monitor',
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: MainTankPage(
-        broker: savedBroker,
-        port: savedPort,
-        topic: savedTopic,
-        sensorType: sensorType,
-        tankType: tankType,
-        height: height,
-        diameter: diameter,
-        length: length,
-        width: width,
-        username: username,
-        password: password,
-        minThreshold: minThr,
-        maxThreshold: maxThr,
-      ),
-    ));
-  } else {
-    runApp(const MyApp());
-  }
+  await initializeLocalNotifications();
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => ThemeProvider(),
+      child: const TankApp(),
+    ),
+  );
 }
 
-// Top-level background handler required by firebase_messaging
-Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  try {
-    await Firebase.initializeApp();
-  } catch (_) {}
-  debugPrint('FCM background message: ${message.messageId}');
-}
+class TankApp extends StatelessWidget {
+  const TankApp({super.key});
 
-Future<String> _getOrCreateDeviceId() async {
-  final prefs = await SharedPreferences.getInstance();
-  var id = prefs.getString('deviceId');
-  if (id == null || id.isEmpty) {
-    id = 'dev_${DateTime.now().millisecondsSinceEpoch}';
-    await prefs.setString('deviceId', id);
-  }
-  return id;
-}
-
-// Helper: register device with bridge
-Future<void> registerDeviceWithBridge({
-  required String deviceId,
-  required String token,
-  required String topic,
-  double? minThreshold,
-  double? maxThreshold,
-  String bridgeUrl = 'http://10.0.2.2:3000' // default to local emulator; change to your bridge host
-}) async {
-  try {
-    final uri = Uri.parse('$bridgeUrl/register');
-    final body = {
-      'deviceId': deviceId,
-      'token': token,
-      'topic': topic,
-      'thresholds': {
-        if (minThreshold != null) 'min': minThreshold,
-        if (maxThreshold != null) 'max': maxThreshold,
-      }
-    };
-    final res = await http.post(uri, body: jsonEncode(body), headers: {'Content-Type': 'application/json'}).timeout(const Duration(seconds: 10));
-    if (res.statusCode == 200) {
-      debugPrint('Registered device with bridge');
-    } else {
-      debugPrint('Bridge register failed: ${res.statusCode} ${res.body}');
-    }
-  } catch (e) {
-    debugPrint('Error registering with bridge: $e');
-  }
-}
-
-enum SensorType { submersible, ultrasonic }
-enum TankType { verticalCylinder, horizontalCylinder, rectangle }
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
     return MaterialApp(
       title: 'Tank Monitor',
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: const MqttTopicPage(),
+      theme: ThemeData(
+        brightness: Brightness.light,
+        primarySwatch: Colors.blue,
+        useMaterial3: true,
+      ),
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        primarySwatch: Colors.blue,
+        useMaterial3: true,
+      ),
+      themeMode: themeProvider.themeMode,
+      home: const LandingPage(),
     );
   }
 }
+
+class DebugPage extends StatefulWidget {
+  const DebugPage({super.key});
+
+  @override
+  State<DebugPage> createState() => _DebugPageState();
+}
+
+class _DebugPageState extends State<DebugPage> {
+  String _bridgeUrl = '';
+  final _bridgeController = TextEditingController();
+  final MethodChannel _ch = const MethodChannel('app.settings.channel');
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    _bridgeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    // Only load saved bridge URL in local-only mode
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString('bridgeUrl') ?? '';
+      setState(() {
+        _bridgeUrl = saved;
+        if (saved.isNotEmpty) _bridgeController.text = saved;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _openSettings() async {
+    try {
+      await _ch.invokeMethod('openAppNotificationSettings');
+    } catch (e) {
+      debugPrint('open settings failed: $e');
+    }
+  }
+
+  Future<void> _postTestNotification() async {
+    try {
+      await showLocalNotification(title: 'Test', body: 'Local test notification');
+    } catch (e) {
+      debugPrint('post notification failed: $e');
+    }
+  }
+
+  Future<void> _checkEnabled() async {
+    try {
+      final enabled = await _ch.invokeMethod('areNotificationsEnabled');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Notifications enabled: $enabled')));
+    } catch (e) {
+      debugPrint('check enabled failed: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(children: [
+          SizedBox(
+            width: 36,
+            height: 36,
+            child: Image.asset('assets/logo.png', fit: BoxFit.contain),
+          ),
+          const SizedBox(width: 12),
+          const Text('Debug')
+        ]),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(12),
+        child: SingleChildScrollView(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Card(
+              elevation: 2,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Firebase removed; app uses local notifications only', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    ElevatedButton(onPressed: _refresh, child: const Text('Refresh')),
+                    const SizedBox(width: 8),
+                    ElevatedButton(onPressed: _checkEnabled, child: const Text('Check Notification')),
+                  ])
+                ]),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              elevation: 1,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Bridge URL', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Text('Current: ${_bridgeUrl.isEmpty ? '(not set - emulator default used)' : _bridgeUrl}'),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _bridgeController,
+                    decoration: const InputDecoration(labelText: 'Bridge URL (https://...)'),
+                    keyboardType: TextInputType.url,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    ElevatedButton(onPressed: () async {
+                      final v = _bridgeController.text.trim();
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setString('bridgeUrl', v);
+                      setState(() { _bridgeUrl = v; });
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bridge URL saved')));
+                    }, child: const Text('Save')),
+                    const SizedBox(width: 8),
+                    ElevatedButton(onPressed: () async {
+                      // Bridge/FCM removed — inform user to use local notifications only
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bridge/FCM disabled — local notifications only')));
+                    }, child: const Text('Register Now (disabled)')),
+                  ])
+                ]),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(children: [
+              ElevatedButton(onPressed: _openSettings, child: const Text('Open App Notification Settings')),
+              const SizedBox(width: 8),
+              ElevatedButton(onPressed: _postTestNotification, child: const Text('Post Local Notification')),
+            ])
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
 
 /// Page 1: Enter broker/topic
 class MqttTopicPage extends StatefulWidget {
@@ -204,42 +290,52 @@ class _MqttTopicPageState extends State<MqttTopicPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        appBar: AppBar(title: const Text('MQTT - Topic')),
+        appBar: AppBar(title: const Text('MQTT - Topic'), actions: [
+          IconButton(
+            icon: const Icon(Icons.bug_report),
+            tooltip: 'Debug',
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const DebugPage()));
+            },
+          )
+        ]),
         body: Padding(
           padding: const EdgeInsets.all(16),
-          child: Column(children: [
-            TextField(
-              controller: _brokerController,
-              decoration: const InputDecoration(labelText: 'MQTT Broker'),
-            ),
-            TextField(
-              controller: _portController,
-              decoration: const InputDecoration(labelText: 'Port'),
-              keyboardType: TextInputType.number,
-            ),
-            TextField(
-              controller: _topicController,
-              decoration: const InputDecoration(labelText: 'Topic (to subscribe)'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _usernameController,
-              decoration: const InputDecoration(
-                  labelText: 'Username (optional)', hintText: 'Leave blank if not needed'),
-            ),
-            TextField(
-              controller: _passwordController,
-              decoration: const InputDecoration(
-                  labelText: 'Password (optional)', hintText: 'Leave blank if not needed'),
-              obscureText: true,
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-                onPressed: _connecting ? null : _submit,
-                child: const Text('Submit & Next')),
-            const SizedBox(height: 12),
-            const Text('Default broker is test.mosquitto.org:1883 (public test broker)'),
-          ]),
+          child: SingleChildScrollView(
+            child: Column(children: [
+              TextField(
+                controller: _brokerController,
+                decoration: const InputDecoration(labelText: 'MQTT Broker'),
+              ),
+              TextField(
+                controller: _portController,
+                decoration: const InputDecoration(labelText: 'Port'),
+                keyboardType: TextInputType.number,
+              ),
+              TextField(
+                controller: _topicController,
+                decoration: const InputDecoration(labelText: 'Topic (to subscribe)'),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _usernameController,
+                decoration: const InputDecoration(
+                    labelText: 'Username (optional)', hintText: 'Leave blank if not needed'),
+              ),
+              TextField(
+                controller: _passwordController,
+                decoration: const InputDecoration(
+                    labelText: 'Password (optional)', hintText: 'Leave blank if not needed'),
+                obscureText: true,
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                  onPressed: _connecting ? null : _submit,
+                  child: const Text('Submit & Next')),
+              const SizedBox(height: 12),
+              const Text('Default broker is test.mosquitto.org:1883 (public test broker)'),
+            ]),
+          ),
         ));
   }
 }
@@ -276,11 +372,11 @@ class _SensorTankSetupPageState extends State<SensorTankSetupPage> {
   final _minController = TextEditingController();
   final _maxController = TextEditingController();
 
-  void _goToMain() {
-  final height = double.tryParse(_heightController.text) ?? 0.0;
-  final diameter = double.tryParse(_diameterController.text) ?? 0.0;
-  final length = double.tryParse(_lengthController.text) ?? 0.0;
-  final width = double.tryParse(_widthController.text) ?? 0.0;
+  Future<void> _goToMain() async {
+    final height = double.tryParse(_heightController.text) ?? 0.0;
+    final diameter = double.tryParse(_diameterController.text) ?? 0.0;
+    final length = double.tryParse(_lengthController.text) ?? 0.0;
+    final width = double.tryParse(_widthController.text) ?? 0.0;
 
   if ((_tankType == TankType.verticalCylinder && (height <= 0 || diameter <= 0)) ||
       (_tankType == TankType.horizontalCylinder && (diameter <= 0 || length <= 0)) ||
@@ -293,52 +389,42 @@ class _SensorTankSetupPageState extends State<SensorTankSetupPage> {
   final minThr = double.tryParse(_minController.text);
   final maxThr = double.tryParse(_maxController.text);
 
-  // persist full settings
-  SharedPreferences.getInstance().then((prefs) {
-    prefs.setString('sensor', _sensorType.toString());
-    prefs.setString('tank', _tankType.toString());
-    prefs.setDouble('height', height);
-    prefs.setDouble('diameter', diameter);
-    prefs.setDouble('length', length);
-    prefs.setDouble('width', width);
-    if (minThr != null) prefs.setDouble('minThreshold', minThr);
-    if (maxThr != null) prefs.setDouble('maxThreshold', maxThr);
-    // register with bridge: get FCM token and device id
-    FirebaseMessaging.instance.getToken().then((token) async {
-      if (token != null) {
-        final deviceId = await _getOrCreateDeviceId();
-        await registerDeviceWithBridge(
-          deviceId: deviceId,
-          token: token,
+    // persist full settings
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('sensor', _sensorType.toString());
+    await prefs.setString('tank', _tankType.toString());
+    await prefs.setDouble('height', height);
+    await prefs.setDouble('diameter', diameter);
+    await prefs.setDouble('length', length);
+    await prefs.setDouble('width', width);
+    if (minThr != null) await prefs.setDouble('minThreshold', minThr);
+    if (maxThr != null) await prefs.setDouble('maxThreshold', maxThr);
+
+  // Bridge/FCM removed: skip remote registration in local-only mode
+  debugPrint('Skipping bridge registration (local notifications only)');
+
+    // Navigate to main page and pass thresholds
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MainTankPage(
+          broker: widget.broker,
+          port: widget.port,
           topic: widget.topic,
+          sensorType: _sensorType,
+          tankType: _tankType,
+          height: height,
+          diameter: diameter,
+          length: length,
+          width: width,
+          username: widget.username,
+          password: widget.password,
           minThreshold: minThr,
           maxThreshold: maxThr,
-        );
-      }
-    });
-  });
-
-  // Navigate to main page and pass thresholds
-  Navigator.pushReplacement(
-    context,
-    MaterialPageRoute(
-      builder: (_) => MainTankPage(
-        broker: widget.broker,
-        port: widget.port,
-        topic: widget.topic,
-        sensorType: _sensorType,
-        tankType: _tankType,
-        height: height,
-        diameter: diameter,
-        length: length,
-        width: width,
-        username: widget.username,
-        password: widget.password,
-        minThreshold: minThr,
-        maxThreshold: maxThr,
+        ),
       ),
-    ),
-  );
+    );
 }
 
   Widget _tankDimensionForm() {
@@ -536,20 +622,11 @@ class _MainTankPageState extends State<MainTankPage> {
 );
     _mqttService.connect();
     // start native foreground service for notifications when app closed
-    _startNativeService();
-    // Also register with bridge for FCM notifications (non-blocking)
-    FirebaseMessaging.instance.getToken().then((token) async {
-      if (token != null) {
-        final deviceId = await _getOrCreateDeviceId();
-        await registerDeviceWithBridge(
-          deviceId: deviceId,
-          token: token,
-          topic: widget.topic,
-          minThreshold: widget.minThreshold,
-          maxThreshold: widget.maxThreshold,
-        );
-      }
-    });
+    if (enableNativeForegroundService) {
+      _startNativeService();
+    }
+  // Bridge/FCM removed: no remote registration in local-only mode
+  debugPrint('Skipping bridge registration in MainTankPage.initState (local notifications only)');
   // notifications removed — no runtime initialization
   }
 
@@ -570,13 +647,7 @@ class _MainTankPageState extends State<MainTankPage> {
     }
   }
 
-  Future<void> _stopNativeService() async {
-    try {
-      await _serviceChannel.invokeMethod('stopService');
-    } catch (e) {
-      debugPrint('Failed to stop native service: $e');
-    }
-  }
+  // _stopNativeService intentionally removed — stopping native service is not used
 
   void _onStatus(String status) {
     setState(() {
@@ -708,6 +779,17 @@ class _MainTankPageState extends State<MainTankPage> {
       appBar: AppBar(
         title: const Text('Tank Monitor'),
         actions: [
+          Consumer<ThemeProvider>(
+            builder: (context, themeProvider, child) {
+              return IconButton(
+                tooltip: 'Toggle Theme',
+                icon: Icon(themeProvider.themeMode == ThemeMode.dark ? Icons.dark_mode : Icons.light_mode),
+                onPressed: () {
+                  themeProvider.toggleTheme(themeProvider.themeMode == ThemeMode.light);
+                },
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Notification settings',
             icon: const Icon(Icons.notifications),
@@ -754,18 +836,16 @@ class _MainTankPageState extends State<MainTankPage> {
             ],
           ),
           const SizedBox(height: 16),
-          Expanded(
-            child: Center(
-              child: AspectRatio(
-                aspectRatio: widget.tankType == TankType.horizontalCylinder ? 2.2 : 0.6,
-                child: CustomPaint(
-                  size: Size.infinite,
-                  painter: TankPainter(
-                    tankType: widget.tankType,
-                    percent: percent.clamp(0.0, 100.0),
-                  ),
-                ),
-              ),
+          SizedBox(
+            height: 300, // Set a fixed height for the tank
+            width: 200, // Set a fixed width for the tank
+            child: TankWidget(
+              tankType: widget.tankType,
+              waterLevel: _level / widget.height,
+              minThreshold: widget.minThreshold != null ? widget.minThreshold! / widget.height : null,
+              maxThreshold: widget.maxThreshold != null ? widget.maxThreshold! / widget.height : null,
+              volume: liquidM3 * 1000,
+              percentage: percent,
             ),
           ),
           const SizedBox(height: 12),
@@ -774,7 +854,7 @@ class _MainTankPageState extends State<MainTankPage> {
                 // go back to setup (reconnect lifecycle)
                 Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(builder: (_) => MqttTopicPage()),
+                  MaterialPageRoute(builder: (_) => const MqttTopicPage()),
                 );
               },
               child: const Text('Back / Setup')),
@@ -784,6 +864,7 @@ class _MainTankPageState extends State<MainTankPage> {
   }
 
   Widget _statCard(String title, String value) {
+    final theme = Theme.of(context);
     return Card(
       child: SizedBox(
         width: 110,
@@ -792,210 +873,12 @@ class _MainTankPageState extends State<MainTankPage> {
           padding: const EdgeInsets.all(8.0),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
-            Text(title, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+            Text(title, style: theme.textTheme.bodySmall),
             const SizedBox(height: 6),
-            Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(value, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
           ]),
         ),
       ),
     );
-  }
-}
-
-/// Simple MQTT wrapper using mqtt_client package
-class MqttService {
-  final String broker;
-  final int port;
-  final String topic;
-  final String? username;
-  final String? password;
-  final void Function(double) onMessage;
-  final void Function(String) onStatus;
-
-  late mqtt.MqttClient client;
-  int _reconnectAttempts = 0;
-
-    MqttService(
-    this.broker,
-    this.port,
-    this.topic, {
-    this.username,
-    this.password,
-    required this.onMessage,
-    required this.onStatus,
-  }) {
-    final clientId = 'flutter_client_${DateTime.now().millisecondsSinceEpoch}';
-
-    if (kIsWeb) {
-      // Build a websocket URI for the browser.
-      // If the user already provided ws:// or wss://, use it as-is.
-      // Otherwise choose ws or wss depending on page protocol and map 1883 -> 8080 by default.
-      String serverUri = broker;
-
-      if (!broker.startsWith('ws://') && !broker.startsWith('wss://')) {
-        // If user typed host:port, split it.
-        String hostOnly = broker;
-        int givenPort = port;
-        if (broker.contains(':')) {
-          final parts = broker.split(':');
-          hostOnly = parts[0];
-          final maybePort = int.tryParse(parts[1]);
-          if (maybePort != null) givenPort = maybePort;
-        }
-
-        // If the web page is https -> use secure websockets (wss)
-        final pageIsHttps = Uri.base.scheme == 'https';
-        final scheme = pageIsHttps ? 'wss' : 'ws';
-
-        // map common mqtt tcp port to common websocket port
-        final wsPort = (givenPort == 1883) ? 8080 : givenPort;
-
-        serverUri = '$scheme://$hostOnly:$wsPort/mqtt';
-      }
-
-      client = MqttBrowserClient(serverUri, clientId);
-      client.logging(on: false);
-      debugPrint('MQTT(Web): serverUri=$serverUri');
-    } else {
-      client = MqttServerClient(broker, clientId);
-      (client as MqttServerClient).port = port;
-      client.logging(on: false);
-      (client as MqttServerClient).secure = false;
-      debugPrint('MQTT(Native): host=$broker port=$port');
-    }
-
-    client.keepAlivePeriod = 20;
-    client.onDisconnected = _onDisconnected;
-    client.onConnected = _onConnected;
-  }
-
-  Future<void> connect() async {
-    onStatus('Connecting...');
-    try {
-      final connMess = mqtt.MqttConnectMessage()
-          .withClientIdentifier(client.clientIdentifier)
-          .startClean()
-          .withWillQos(mqtt.MqttQos.atLeastOnce);
-      client.connectionMessage = connMess;
-
-      final user = (username ?? '').trim().isEmpty ? null : username;
-      final pass = (password ?? '').trim().isEmpty ? null : password;
-
-      if (user != null || pass != null) {
-        await client.connect(user, pass);
-      } else {
-        await client.connect();
-      }
-
-      _reconnectAttempts = 0;
-      onStatus('Connected');
-      _subscribe();
-      client.updates?.listen(_onMessage);
-    } on SocketException catch (se, st) {
-      debugPrint('MQTT SocketException: $se');
-      debugPrint('$st');
-      onStatus('Network error: ${se.message}');
-      disconnect();
-      _reconnectAttempts++;
-      final delaySeconds = (pow(2, _reconnectAttempts) as double).clamp(1, 30).toInt();
-      Timer(Duration(seconds: delaySeconds), connect);
-    } catch (e, st) {
-      debugPrint('MQTT connect error: $e');
-      debugPrint('$st');
-      onStatus('Error: $e');
-      disconnect();
-    }
-  }
-
-  void _subscribe() {
-    client.subscribe(topic, mqtt.MqttQos.atMostOnce);
-    onStatus('Subscribed to $topic');
-  }
-
-  void _onMessage(List<mqtt.MqttReceivedMessage<mqtt.MqttMessage>>? event) {
-    if (event == null || event.isEmpty) return;
-    final recMess = event[0].payload as mqtt.MqttPublishMessage;
-    final payload = mqtt.MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
-    final value = double.tryParse(payload.trim());
-    if (value != null) {
-      onMessage(value);
-    } else {
-      final maybe = _extractFirstNumber(payload);
-      if (maybe != null) onMessage(maybe);
-    }
-  }
-
-  double? _extractFirstNumber(String s) {
-    final regex = RegExp(r'[-+]?[0-9]*\.?[0-9]+');
-    final match = regex.firstMatch(s);
-    if (match != null) return double.tryParse(match.group(0)!);
-    return null;
-  }
-
-  void _onDisconnected() => onStatus('Disconnected');
-  void _onConnected() => onStatus('Connected');
-
-  void disconnect() {
-    try {
-      client.disconnect();
-    } catch (_) {}
-  }
-}
-
-/// Painter to show a simple tank filling
-class TankPainter extends CustomPainter {
-  final TankType tankType;
-  final double percent; // 0..100
-
-  TankPainter({required this.tankType, required this.percent});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paintTank = Paint()
-      ..color = Colors.black
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3;
-    final paintFill = Paint()
-      ..shader = LinearGradient(
-        colors: [Colors.blue.shade400, Colors.blue.shade800],
-      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
-      ..style = PaintingStyle.fill;
-
-    if (tankType == TankType.verticalCylinder || tankType == TankType.rectangle) {
-      final rect = Rect.fromLTWH(10, 10, size.width - 20, size.height - 20);
-      // draw tank border
-      canvas.drawRect(rect, paintTank);
-      // fill according to percent from bottom
-      final fillHeight = (rect.height) * (percent / 100.0);
-      final fillRect = Rect.fromLTWH(rect.left, rect.bottom - fillHeight, rect.width, fillHeight);
-      canvas.drawRect(fillRect, paintFill);
-    } else {
-      // horizontal cylinder: draw rounded ends and fill from left
-      final r = (size.height - 20) / 2;
-      final L = size.width - 40;
-      final centerY = size.height / 2;
-      final left = 20.0;
-      final right = left + L;
-
-      // outline as rounded rect
-      final outer = RRect.fromLTRBR(left - r, centerY - r, right + r, centerY + r, Radius.circular(r));
-      canvas.drawRRect(outer, paintTank);
-
-      // fill width by percent:
-      final filledWidth = (L + 2 * r) * (percent / 100.0);
-
-      // clip to outer then draw a rectangle for filling
-      final clipPath = Path()..addRRect(outer);
-      canvas.save();
-      canvas.clipPath(clipPath);
-      final fillRect = Rect.fromLTWH(left - r, centerY - r, filledWidth, r * 2);
-      canvas.drawRect(fillRect, paintFill);
-      canvas.restore();
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant TankPainter oldDelegate) {
-    return oldDelegate.percent != percent || oldDelegate.tankType != tankType;
   }
 }

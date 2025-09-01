@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "225897675317",
+    "project_id": "liquid-level-3abd4",
+    "storage_bucket": "liquid-level-3abd4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:225897675317:android:4d17847869d1d637464f7c",
+        "android_client_info": {
+          "package_name": "com.example.flutter_application_1"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAn4ElKf7GLEdv9JqcbbgwXL-l-Nljc7FI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

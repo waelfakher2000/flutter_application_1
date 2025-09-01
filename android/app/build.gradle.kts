@@ -5,6 +5,7 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+
 android {
     namespace = "com.example.flutter_application_1"
     compileSdk = flutter.compileSdkVersion
@@ -13,6 +14,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+    // Required for some plugins that use newer Java APIs and require desugaring
+    isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -41,4 +44,12 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // Core library desugaring to support libraries that need newer Java APIs
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.3")
+    // Paho MQTT for native Android foreground service
+    implementation("org.eclipse.paho:org.eclipse.paho.android.service:1.1.1")
+    implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
 }
