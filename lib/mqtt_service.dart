@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:mqtt_client/mqtt_client.dart' as mqtt;
@@ -11,6 +12,7 @@ class MqttService {
   final String broker;
   final int port;
   final String topic;
+  final String? publishTopic; // optional control topic
   final String? username;
   final String? password;
   final void Function(double) onMessage;
@@ -22,7 +24,8 @@ class MqttService {
     MqttService(
     this.broker,
     this.port,
-    this.topic, {
+  this.topic, {
+  this.publishTopic,
     this.username,
     this.password,
     required this.onMessage,
@@ -71,6 +74,24 @@ class MqttService {
     client.keepAlivePeriod = 20;
     client.onDisconnected = _onDisconnected;
     client.onConnected = _onConnected;
+  }
+
+  // Publish a simple JSON payload {"value": <value>, "timestamp": <iso8601>} to publishTopic or provided topic
+  Future<void> publishJson(String value, {String? toTopic, mqtt.MqttQos qos = mqtt.MqttQos.atLeastOnce}) async {
+    final t = (toTopic ?? publishTopic);
+    if (t == null || t.trim().isEmpty) return;
+    try {
+      if (client.connectionStatus?.state != mqtt.MqttConnectionState.connected) return;
+      final payloadMap = {
+        'value': value,
+        'timestamp': DateTime.now().toIso8601String(),
+      };
+      final builder = mqtt.MqttClientPayloadBuilder();
+      builder.addString(jsonEncode(payloadMap));
+      client.publishMessage(t, qos, builder.payload!);
+    } catch (e) {
+      debugPrint('MQTT publish error: $e');
+    }
   }
 
   Future<void> connect() async {

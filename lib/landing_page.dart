@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_application_1/project_list_page.dart';
 import 'main.dart'; // Import your main app file
 import 'types.dart';
 
@@ -40,57 +41,10 @@ class _LandingPageState extends State<LandingPage> with SingleTickerProviderStat
   Future<void> _navigateToNextScreen() async {
     await Future.delayed(const Duration(seconds: 3)); // Total time for landing page
 
-    final prefs = await SharedPreferences.getInstance();
-    final broker = prefs.getString('broker');
-    final port = prefs.getInt('port');
-    final topic = prefs.getString('topic');
-
     if (mounted) {
-      if (broker != null && port != null && topic != null) {
-        final savedSensor = prefs.getString('sensor');
-        final savedTank = prefs.getString('tank');
-
-        if (savedSensor != null && savedTank != null) {
-          final sensorType = SensorType.values.firstWhere((e) => e.toString() == savedSensor, orElse: () => SensorType.submersible);
-          final tankType = TankType.values.firstWhere((e) => e.toString() == savedTank, orElse: () => TankType.verticalCylinder);
-          final height = prefs.getDouble('height') ?? 1.0;
-          final diameter = prefs.getDouble('diameter') ?? 0.4;
-          final length = prefs.getDouble('length') ?? 1.0;
-          final width = prefs.getDouble('width') ?? 0.5;
-          final minThr = prefs.getDouble('minThreshold');
-          final maxThr = prefs.getDouble('maxThreshold');
-          final username = prefs.getString('username');
-          final password = prefs.getString('password');
-
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (context) => MainTankPage(
-                broker: broker,
-                port: port,
-                topic: topic,
-                sensorType: sensorType,
-                tankType: tankType,
-                height: height,
-                diameter: diameter,
-                length: length,
-                width: width,
-                username: username,
-                password: password,
-                minThreshold: minThr,
-                maxThreshold: maxThr,
-              ),
-            ),
-          );
-        } else {
-           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (context) => const MqttTopicPage()),
-          );
-        }
-      } else {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const MqttTopicPage()),
-        );
-      }
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (context) => const ProjectListPage()),
+      );
     }
   }
 

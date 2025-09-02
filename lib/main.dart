@@ -11,6 +11,7 @@ import 'theme_provider.dart';
 import 'types.dart';
 import 'mqtt_service.dart';
 import 'landing_page.dart';
+import 'project_list_page.dart';
 
 // Local notifications plugin instance
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
@@ -299,42 +300,47 @@ class _MqttTopicPageState extends State<MqttTopicPage> {
             },
           )
         ]),
-        body: Padding(
-          padding: const EdgeInsets.all(16),
-          child: SingleChildScrollView(
-            child: Column(children: [
-              TextField(
-                controller: _brokerController,
-                decoration: const InputDecoration(labelText: 'MQTT Broker'),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32), // extra bottom padding
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: _brokerController,
+                    decoration: const InputDecoration(labelText: 'MQTT Broker'),
+                  ),
+                  TextField(
+                    controller: _portController,
+                    decoration: const InputDecoration(labelText: 'Port'),
+                    keyboardType: TextInputType.number,
+                  ),
+                  TextField(
+                    controller: _topicController,
+                    decoration: const InputDecoration(labelText: 'Topic (to subscribe)'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _usernameController,
+                    decoration: const InputDecoration(
+                        labelText: 'Username (optional)', hintText: 'Leave blank if not needed'),
+                  ),
+                  TextField(
+                    controller: _passwordController,
+                    decoration: const InputDecoration(
+                        labelText: 'Password (optional)', hintText: 'Leave blank if not needed'),
+                    obscureText: true,
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton(
+                      onPressed: _connecting ? null : _submit,
+                      child: const Text('Submit & Next')),
+                  const SizedBox(height: 12),
+                  const Text('Default broker is test.mosquitto.org:1883 (public test broker)'),
+                ],
               ),
-              TextField(
-                controller: _portController,
-                decoration: const InputDecoration(labelText: 'Port'),
-                keyboardType: TextInputType.number,
-              ),
-              TextField(
-                controller: _topicController,
-                decoration: const InputDecoration(labelText: 'Topic (to subscribe)'),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _usernameController,
-                decoration: const InputDecoration(
-                    labelText: 'Username (optional)', hintText: 'Leave blank if not needed'),
-              ),
-              TextField(
-                controller: _passwordController,
-                decoration: const InputDecoration(
-                    labelText: 'Password (optional)', hintText: 'Leave blank if not needed'),
-                obscureText: true,
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                  onPressed: _connecting ? null : _submit,
-                  child: const Text('Submit & Next')),
-              const SizedBox(height: 12),
-              const Text('Default broker is test.mosquitto.org:1883 (public test broker)'),
-            ]),
+            ),
           ),
         ));
   }
@@ -422,6 +428,7 @@ class _SensorTankSetupPageState extends State<SensorTankSetupPage> {
           password: widget.password,
           minThreshold: minThr,
           maxThreshold: maxThr,
+          projectName: widget.topic, // fallback to topic as name if not available
         ),
       ),
     );
@@ -574,7 +581,17 @@ class MainTankPage extends StatefulWidget {
   final String? password;
   final double? minThreshold;
   final double? maxThreshold;
+  final double multiplier;
+  final double offset;
+  // Control button config
+  final bool useControlButton;
+  final String? controlTopic;
+  final ControlMode controlMode;
+  final String onValue;
+  final String offValue;
+  final bool autoControl;
 
+  final String projectName;
   const MainTankPage({
     super.key,
     required this.broker,
@@ -588,8 +605,17 @@ class MainTankPage extends StatefulWidget {
     required this.width,
     this.username,
     this.password,
-  this.minThreshold,
-  this.maxThreshold,
+    this.minThreshold,
+    this.maxThreshold,
+    required this.projectName,
+    this.multiplier = 1.0,
+    this.offset = 0.0,
+  this.useControlButton = false,
+  this.controlTopic,
+  this.controlMode = ControlMode.toggle,
+  this.onValue = 'ON',
+  this.offValue = 'OFF',
+  this.autoControl = false,
   });
 
   @override
@@ -603,31 +629,64 @@ class _MainTankPageState extends State<MainTankPage> {
   double? _lastNotifiedHigh;
   double? _lastNotifiedLow;
 
-  double _rawPayload = 0.0; // raw numeric value from MQTT
   double _level = 0.0; // computed level in meters (liquid height from bottom)
   Timer? _heartbeatTimer;
   String _connectionStatus = 'Disconnected';
+  bool _isOn = false; // current state for on/off or last state for toggle
+  bool _sending = false; // show progress while publishing
 
   @override
   void initState() {
     super.initState();
     _mqttService = MqttService(
-  widget.broker,
-  widget.port,
-  widget.topic,
-  username: widget.username,
-  password: widget.password,
-  onMessage: _onMessage,
-  onStatus: _onStatus,
-);
+      widget.broker,
+      widget.port,
+      widget.topic,
+  publishTopic: widget.controlTopic,
+      username: widget.username,
+      password: widget.password,
+      onMessage: _onMessage,
+      onStatus: _onStatus,
+    );
     _mqttService.connect();
     // start native foreground service for notifications when app closed
     if (enableNativeForegroundService) {
       _startNativeService();
     }
-  // Bridge/FCM removed: no remote registration in local-only mode
-  debugPrint('Skipping bridge registration in MainTankPage.initState (local notifications only)');
-  // notifications removed — no runtime initialization
+    debugPrint('Skipping bridge registration in MainTankPage.initState (local notifications only)');
+  }
+
+  Future<void> _publishControl(String value) async {
+    await _mqttService.publishJson(value, toTopic: widget.controlTopic);
+  }
+
+  Future<void> _toggleOrSet() async {
+    if (_sending) return; // prevent double taps
+    setState(() => _sending = true);
+    if (widget.controlMode == ControlMode.toggle) {
+      // Locally flip for UI and send toggle command
+      setState(() => _isOn = !_isOn);
+      try {
+        await _publishControl(widget.onValue);
+      } finally {
+        if (mounted) setState(() => _sending = false);
+      }
+    } else {
+      // onOff: flip local and publish new value
+      setState(() => _isOn = !_isOn);
+      try {
+        await _publishControl(_isOn ? widget.onValue : widget.offValue);
+      } finally {
+        if (mounted) setState(() => _sending = false);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _mqttService.disconnect();
+    _heartbeatTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _startNativeService() async {
@@ -636,10 +695,17 @@ class _MainTankPageState extends State<MainTankPage> {
         'broker': widget.broker,
         'port': widget.port,
         'topic': widget.topic,
+        'sensorType': widget.sensorType.toString(),
+        'tankType': widget.tankType.toString(),
+        'height': widget.height,
+        'diameter': widget.diameter,
+        'length': widget.length,
+        'width': widget.width,
         'username': widget.username,
         'password': widget.password,
         'minThreshold': widget.minThreshold ?? double.nan,
         'maxThreshold': widget.maxThreshold ?? double.nan,
+        'projectName': widget.projectName,
       };
       await _serviceChannel.invokeMethod('startService', args);
     } catch (e) {
@@ -647,26 +713,28 @@ class _MainTankPageState extends State<MainTankPage> {
     }
   }
 
-  // _stopNativeService intentionally removed — stopping native service is not used
-
   void _onStatus(String status) {
+    if (!mounted) return;
     setState(() {
       _connectionStatus = status;
     });
   }
 
   void _onMessage(double value) {
+    if (!mounted) return;
+    
+    final correctedValue = value * widget.multiplier + widget.offset;
+
     // Called when a numeric payload arrives
-  setState(() {
-      _rawPayload = value;
+    setState(() {
       // Interpret payload depending on sensor type
       if (widget.sensorType == SensorType.submersible) {
         // payload is the liquid level directly (meters from bottom)
-        _level = value;
+        _level = correctedValue;
       } else {
         // ultrasonic: payload is distance from sensor to liquid surface
         // We assume sensor mounted at tank top; so level = tankHeight - distance
-        _level = widget.height - value;
+        _level = widget.height - correctedValue;
       }
       // clamp to [0, tank height]
       if (_level.isNaN) _level = 0.0;
@@ -676,12 +744,10 @@ class _MainTankPageState extends State<MainTankPage> {
     // check thresholds outside setState to avoid UI jitter
     final minThr = widget.minThreshold;
     final maxThr = widget.maxThreshold;
-    // notifications removed; we still track lastNotified to avoid logic spam
     if (maxThr != null && _level > maxThr) {
       if (_lastNotifiedHigh == null || _lastNotifiedHigh! < maxThr) {
         _lastNotifiedHigh = _level;
-  // Post native notification if allowed
-  _maybeNotify('High level', 'Level ${_level.toStringAsFixed(2)}m exceeded max ${maxThr.toStringAsFixed(2)}m');
+        _maybeNotify('High level', 'Level ${_level.toStringAsFixed(2)}m exceeded max ${maxThr.toStringAsFixed(2)}m');
       }
     } else {
       _lastNotifiedHigh = null;
@@ -692,28 +758,54 @@ class _MainTankPageState extends State<MainTankPage> {
         _lastNotifiedLow = _level;
         _maybeNotify('Low level', 'Level ${_level.toStringAsFixed(2)}m below min ${minThr.toStringAsFixed(2)}m');
       }
+      // Auto control: turn ON when below min
+      if (widget.useControlButton && widget.autoControl) {
+        if (!mounted) return;
+        if (widget.controlMode == ControlMode.onOff) {
+          if (!_isOn) {
+            _isOn = true; // update locally without setState to avoid rebuild storm
+            unawaited(_publishControl(widget.onValue));
+          }
+        } else {
+          // toggle mode: only send if we consider it OFF; naive approach uses _isOn flag
+          if (!_isOn) {
+            _isOn = true;
+            unawaited(_publishControl(widget.onValue));
+          }
+        }
+      }
     } else {
       _lastNotifiedLow = null;
     }
+
+    // Auto control: turn OFF when above max
+    if (maxThr != null && _level > maxThr) {
+      if (widget.useControlButton && widget.autoControl) {
+        if (widget.controlMode == ControlMode.onOff) {
+          if (_isOn) {
+            _isOn = false;
+            unawaited(_publishControl(widget.offValue));
+          }
+        } else {
+          if (_isOn) {
+            _isOn = false;
+            unawaited(_publishControl(widget.onValue)); // toggle command
+          }
+        }
+      }
+    }
   }
-  
-  // Invoke platform channel to post notification if enabled, otherwise open settings prompt
-  //static const MethodChannel _settingsChannel = MethodChannel('app.settings.channel');
 
   void _maybeNotify(String title, String body) async {
     try {
       final enabled = await _settingsChannel.invokeMethod<bool>('areNotificationsEnabled');
       if (enabled == true) {
         await _settingsChannel.invokeMethod('postNotification', {'title': title, 'body': body});
-      } else {
-        // Not enabled — call settings so user can enable
-        await _settingsChannel.invokeMethod('openAppNotificationSettings');
       }
     } catch (e) {
       debugPrint('Notification channel error: $e');
     }
   }
-  // notifications removed; no-op placeholder could be added here later
 
   // Volume calculators
   double _totalVolumeM3() {
@@ -723,13 +815,12 @@ class _MainTankPageState extends State<MainTankPage> {
         return pi * r * r * widget.height;
       case TankType.horizontalCylinder:
         final r = widget.diameter / 2.0;
-  return _horizontalCylinderVolume(r, widget.length); // full volume
+        return _horizontalCylinderVolume(r, widget.length); // full volume
       case TankType.rectangle:
         return widget.length * widget.width * widget.height;
     }
   }
 
-  // liquid vol given _level
   double _liquidVolumeM3() {
     switch (widget.tankType) {
       case TankType.verticalCylinder:
@@ -751,21 +842,33 @@ class _MainTankPageState extends State<MainTankPage> {
 
   // Horizontal cylinder: area of circular segment when filled to depth h (0..2r)
   double _horizontalCylinderSectionArea(double r, double h) {
-    // if h <= 0 -> 0, if h >= 2r -> area = pi*r^2
     if (h <= 0) return 0.0;
     if (h >= 2 * r) return pi * r * r;
-    // Another variant often used:
-    // A = r^2 * acos((r-h)/r) - (r-h)*sqrt(2*r*h - h*h)
-    // both are equivalent; let's use robust numeric formula:
     final a = r * r * acos((r - h) / r) - (r - h) * sqrt(2 * r * h - h * h);
     return a;
   }
 
-  @override
-  void dispose() {
-    _mqttService.disconnect();
-    _heartbeatTimer?.cancel();
-    super.dispose();
+  // Helper widget for stat cards
+  Widget _statCard(String title, String value) {
+    final theme = Theme.of(context);
+    return Card(
+      child: SizedBox(
+        width: 110,
+        height: 68,
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(title, style: theme.textTheme.bodySmall),
+              const SizedBox(height: 6),
+              Text(value, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -777,7 +880,7 @@ class _MainTankPageState extends State<MainTankPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Tank Monitor'),
+        title: Text(widget.projectName),
         actions: [
           Consumer<ThemeProvider>(
             builder: (context, themeProvider, child) {
@@ -801,17 +904,6 @@ class _MainTankPageState extends State<MainTankPage> {
               }
             },
           ),
-          IconButton(
-            tooltip: 'Send test notification',
-            icon: const Icon(Icons.notification_add),
-            onPressed: () {
-              _maybeNotify('Test Notification', 'This is a test alert from the app');
-            },
-          ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Center(child: Text(_connectionStatus, style: const TextStyle(fontSize: 12))),
-          )
         ],
       ),
       body: Padding(
@@ -832,7 +924,7 @@ class _MainTankPageState extends State<MainTankPage> {
             children: [
               _statCard('Empty L', '${(emptyM3 * 1000).toStringAsFixed(2)} L'),
               _statCard('Total L', '${(totalM3 * 1000).toStringAsFixed(2)} L'),
-              _statCard('Raw payload', _rawPayload.toStringAsFixed(3)),
+              _statCard('Empty (m)', (widget.height - _level).toStringAsFixed(3)),
             ],
           ),
           const SizedBox(height: 16),
@@ -849,34 +941,74 @@ class _MainTankPageState extends State<MainTankPage> {
             ),
           ),
           const SizedBox(height: 12),
+          if (widget.useControlButton)
+            Card(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              elevation: 1,
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(children: [
+                      Container(width: 4, height: 18, decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, borderRadius: BorderRadius.circular(2))),
+                      const SizedBox(width: 8),
+                      Icon(Icons.power_settings_new, color: Theme.of(context).colorScheme.primary),
+                      const SizedBox(width: 6),
+                      Text('Control', style: TextStyle(fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.primary)),
+                    ]),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.center,
+                      child: FilledButton.icon(
+                        onPressed: _sending ? null : _toggleOrSet,
+                        icon: Icon(_isOn ? Icons.power : Icons.power_off),
+                        label: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4.0),
+                          child: Text(_isOn ? 'ON' : 'OFF', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                        ),
+                        style: FilledButton.styleFrom(
+                          shape: const StadiumBorder(),
+                          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                          backgroundColor: _isOn ? Colors.green : Theme.of(context).colorScheme.surfaceVariant,
+                          foregroundColor: _isOn ? Colors.white : Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                    if (_sending) ...[
+                      const SizedBox(height: 10),
+                      Row(mainAxisAlignment: MainAxisAlignment.center, children: const [
+                        SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                        SizedBox(width: 8),
+                        Text('Publishing...'),
+                      ]),
+                    ],
+                    if (widget.controlTopic != null && widget.controlTopic!.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text('Topic: ${widget.controlTopic}', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          const SizedBox(height: 12),
           ElevatedButton(
               onPressed: () {
                 // go back to setup (reconnect lifecycle)
                 Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(builder: (_) => const MqttTopicPage()),
+                  MaterialPageRoute(builder: (_) => const ProjectListPage()),
                 );
               },
-              child: const Text('Back / Setup')),
+              child: const Text('Back to Projects')),
         ]),
       ),
-    );
-  }
-
-  Widget _statCard(String title, String value) {
-    final theme = Theme.of(context);
-    return Card(
-      child: SizedBox(
-        width: 110,
-        height: 68,
-        child: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
-            Text(title, style: theme.textTheme.bodySmall),
-            const SizedBox(height: 6),
-            Text(value, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-          ]),
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Text(
+          _connectionStatus,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodySmall,
         ),
       ),
     );
