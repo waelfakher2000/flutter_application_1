@@ -77,7 +77,12 @@ class MqttService {
   }
 
   // Publish a simple JSON payload {"value": <value>, "timestamp": <iso8601>} to publishTopic or provided topic
-  Future<void> publishJson(String value, {String? toTopic, mqtt.MqttQos qos = mqtt.MqttQos.atLeastOnce}) async {
+  Future<void> publishJson(
+    String value, {
+    String? toTopic,
+    mqtt.MqttQos qos = mqtt.MqttQos.atLeastOnce,
+    bool retained = false,
+  }) async {
     final t = (toTopic ?? publishTopic);
     if (t == null || t.trim().isEmpty) return;
     try {
@@ -88,7 +93,7 @@ class MqttService {
       };
       final builder = mqtt.MqttClientPayloadBuilder();
       builder.addString(jsonEncode(payloadMap));
-      client.publishMessage(t, qos, builder.payload!);
+  client.publishMessage(t, qos, builder.payload!, retain: retained);
     } catch (e) {
       debugPrint('MQTT publish error: $e');
     }

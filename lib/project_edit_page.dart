@@ -35,6 +35,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   late TextEditingController _onValueController;
   late TextEditingController _offValueController;
   bool _autoControl = false;
+  bool _controlRetained = false;
+  MqttQosLevel _controlQos = MqttQosLevel.atLeastOnce;
 
   SensorType _sensorType = SensorType.submersible;
   TankType _tankType = TankType.verticalCylinder;
@@ -66,6 +68,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   _onValueController = TextEditingController(text: p?.onValue ?? 'ON');
   _offValueController = TextEditingController(text: p?.offValue ?? 'OFF');
   _autoControl = p?.autoControl ?? false;
+  _controlRetained = p?.controlRetained ?? false;
+  _controlQos = p?.controlQos ?? MqttQosLevel.atLeastOnce;
   }
 
   @override
@@ -116,6 +120,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   onValue: _onValueController.text.isEmpty ? 'ON' : _onValueController.text,
   offValue: _offValueController.text.isEmpty ? 'OFF' : _offValueController.text,
   autoControl: _autoControl,
+  controlRetained: _controlRetained,
+  controlQos: _controlQos,
       );
       Navigator.of(context).pop(project);
     }
@@ -310,14 +316,18 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                               },
                             ),
                             const SizedBox(height: 12),
-                            DropdownButtonFormField<ControlMode>(
-                              value: _controlMode,
-                              decoration: _dec('Mode', Icons.tune),
-                              items: const [
-                                DropdownMenuItem(value: ControlMode.onOff, child: Text('On/Off')),
-                                DropdownMenuItem(value: ControlMode.toggle, child: Text('Toggle')),
-                              ],
-                              onChanged: (v) => setState(() => _controlMode = v ?? ControlMode.toggle),
+                            SizedBox(
+                              width: double.infinity,
+                              child: DropdownButtonFormField<ControlMode>(
+                                isExpanded: true,
+                                value: _controlMode,
+                                decoration: _dec('Mode', Icons.tune),
+                                items: const [
+                                  DropdownMenuItem(value: ControlMode.onOff, child: Text('On/Off')),
+                                  DropdownMenuItem(value: ControlMode.toggle, child: Text('Toggle')),
+                                ],
+                                onChanged: (v) => setState(() => _controlMode = v ?? ControlMode.toggle),
+                              ),
                             ),
                             const SizedBox(height: 12),
                             Row(children: [
@@ -335,6 +345,30 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                                 ),
                               ),
                             ]),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: DropdownButtonFormField<MqttQosLevel>(
+                                isExpanded: true,
+                                value: _controlQos,
+                                decoration: _dec('QoS', Icons.network_check),
+                                items: const [
+                                  DropdownMenuItem(value: MqttQosLevel.atMostOnce, child: Text('At most once (0)')),
+                                  DropdownMenuItem(value: MqttQosLevel.atLeastOnce, child: Text('At least once (1)')),
+                                  DropdownMenuItem(value: MqttQosLevel.exactlyOnce, child: Text('Exactly once (2)')),
+                                ],
+                                onChanged: (v) => setState(() => _controlQos = v ?? MqttQosLevel.atLeastOnce),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            CheckboxListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('Retained'),
+                              subtitle: const Text('Keep last state on broker'),
+                              value: _controlRetained,
+                              onChanged: (v) => setState(() => _controlRetained = v ?? false),
+                              controlAffinity: ListTileControlAffinity.leading,
+                            ),
                             const SizedBox(height: 8),
                             CheckboxListTile(
                               title: const Text('Automatic (use min/max thresholds to control)'),

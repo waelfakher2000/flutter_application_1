@@ -27,6 +27,8 @@ class Project {
   String onValue;
   String offValue;
   bool autoControl; // use min/max thresholds to auto toggle
+  bool controlRetained; // publish retained
+  MqttQosLevel controlQos; // publish QoS
 
   Project({
     String? id,
@@ -52,6 +54,8 @@ class Project {
   this.onValue = 'ON',
   this.offValue = 'OFF',
   this.autoControl = false,
+  this.controlRetained = false,
+  this.controlQos = MqttQosLevel.atLeastOnce,
   }) : id = id ?? const Uuid().v4();
 
   Map<String, dynamic> toJson() {
@@ -79,6 +83,8 @@ class Project {
   'onValue': onValue,
   'offValue': offValue,
   'autoControl': autoControl,
+  'controlRetained': controlRetained,
+  'controlQos': controlQos.toString(),
     };
   }
 
@@ -110,6 +116,11 @@ class Project {
       onValue: (json['onValue'] ?? 'ON').toString(),
       offValue: (json['offValue'] ?? 'OFF').toString(),
       autoControl: json['autoControl'] == true,
+      controlRetained: json['controlRetained'] == true,
+      controlQos: MqttQosLevel.values.firstWhere(
+        (e) => e.toString() == (json['controlQos'] ?? MqttQosLevel.atLeastOnce.toString()),
+        orElse: () => MqttQosLevel.atLeastOnce,
+      ),
     );
   }
 

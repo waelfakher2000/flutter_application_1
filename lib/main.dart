@@ -12,6 +12,7 @@ import 'types.dart';
 import 'mqtt_service.dart';
 import 'landing_page.dart';
 import 'project_list_page.dart';
+import 'package:mqtt_client/mqtt_client.dart' as mqtt;
 
 // Local notifications plugin instance
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
@@ -590,6 +591,8 @@ class MainTankPage extends StatefulWidget {
   final String onValue;
   final String offValue;
   final bool autoControl;
+  final bool controlRetained;
+  final MqttQosLevel controlQos;
 
   final String projectName;
   const MainTankPage({
@@ -616,6 +619,8 @@ class MainTankPage extends StatefulWidget {
   this.onValue = 'ON',
   this.offValue = 'OFF',
   this.autoControl = false,
+  this.controlRetained = false,
+  this.controlQos = MqttQosLevel.atLeastOnce,
   });
 
   @override
@@ -656,7 +661,24 @@ class _MainTankPageState extends State<MainTankPage> {
   }
 
   Future<void> _publishControl(String value) async {
-    await _mqttService.publishJson(value, toTopic: widget.controlTopic);
+    await _mqttService.publishJson(
+      value,
+      toTopic: widget.controlTopic,
+      qos: _mapQos(widget.controlQos),
+      retained: widget.controlRetained,
+    );
+  }
+
+  // Map our simple enum to mqtt_client QoS
+  mqtt.MqttQos _mapQos(MqttQosLevel q) {
+    switch (q) {
+      case MqttQosLevel.atMostOnce:
+        return mqtt.MqttQos.atMostOnce;
+      case MqttQosLevel.atLeastOnce:
+        return mqtt.MqttQos.atLeastOnce;
+      case MqttQosLevel.exactlyOnce:
+        return mqtt.MqttQos.exactlyOnce;
+    }
   }
 
   Future<void> _toggleOrSet() async {

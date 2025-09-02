@@ -193,6 +193,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
                           onValue: project.onValue,
                           offValue: project.offValue,
                           autoControl: project.autoControl,
+                          controlRetained: project.controlRetained,
+                          controlQos: project.controlQos,
                         ),
                       ),
                     );
