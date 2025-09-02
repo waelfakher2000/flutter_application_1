@@ -633,7 +633,6 @@ class _MainTankPageState extends State<MainTankPage> {
   Timer? _heartbeatTimer;
   String _connectionStatus = 'Disconnected';
   bool _isOn = false; // current state for on/off or last state for toggle
-  bool _sending = false; // show progress while publishing
 
   @override
   void initState() {
@@ -661,24 +660,14 @@ class _MainTankPageState extends State<MainTankPage> {
   }
 
   Future<void> _toggleOrSet() async {
-    if (_sending) return; // prevent double taps
-    setState(() => _sending = true);
     if (widget.controlMode == ControlMode.toggle) {
       // Locally flip for UI and send toggle command
       setState(() => _isOn = !_isOn);
-      try {
-        await _publishControl(widget.onValue);
-      } finally {
-        if (mounted) setState(() => _sending = false);
-      }
+  await _publishControl(widget.onValue);
     } else {
       // onOff: flip local and publish new value
       setState(() => _isOn = !_isOn);
-      try {
-        await _publishControl(_isOn ? widget.onValue : widget.offValue);
-      } finally {
-        if (mounted) setState(() => _sending = false);
-      }
+  await _publishControl(_isOn ? widget.onValue : widget.offValue);
     }
   }
 
@@ -942,54 +931,19 @@ class _MainTankPageState extends State<MainTankPage> {
           ),
           const SizedBox(height: 12),
           if (widget.useControlButton)
-            Card(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              elevation: 1,
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(children: [
-                      Container(width: 4, height: 18, decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, borderRadius: BorderRadius.circular(2))),
-                      const SizedBox(width: 8),
-                      Icon(Icons.power_settings_new, color: Theme.of(context).colorScheme.primary),
-                      const SizedBox(width: 6),
-                      Text('Control', style: TextStyle(fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.primary)),
-                    ]),
-                    const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.center,
-                      child: FilledButton.icon(
-                        onPressed: _sending ? null : _toggleOrSet,
-                        icon: Icon(_isOn ? Icons.power : Icons.power_off),
-                        label: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4.0),
-                          child: Text(_isOn ? 'ON' : 'OFF', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-                        ),
-                        style: FilledButton.styleFrom(
-                          shape: const StadiumBorder(),
-                          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-                          backgroundColor: _isOn ? Colors.green : Theme.of(context).colorScheme.surfaceVariant,
-                          foregroundColor: _isOn ? Colors.white : Theme.of(context).colorScheme.onSurface,
-                        ),
-                      ),
-                    ),
-                    if (_sending) ...[
-                      const SizedBox(height: 10),
-                      Row(mainAxisAlignment: MainAxisAlignment.center, children: const [
-                        SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                        SizedBox(width: 8),
-                        Text('Publishing...'),
-                      ]),
-                    ],
-                    if (widget.controlTopic != null && widget.controlTopic!.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text('Topic: ${widget.controlTopic}', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall),
-                    ],
-                  ],
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                FilledButton(
+                  onPressed: _toggleOrSet,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _isOn ? Colors.green : Colors.grey,
+                    foregroundColor: _isOn ? Colors.white : Colors.black87,
+                    minimumSize: const Size(140, 44),
+                  ),
+                  child: Text(_isOn ? 'ON' : 'OFF'),
                 ),
-              ),
+              ],
             ),
           const SizedBox(height: 12),
           ElevatedButton(
