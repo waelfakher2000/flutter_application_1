@@ -14,6 +14,9 @@ class MqttService {
   final String topic;
   final String? publishTopic; // optional control topic
   final String? lastWillTopic; // optional presence/last will topic to subscribe
+  final bool payloadIsJson; // interpret main topic payload as JSON
+  final int jsonFieldIndex; // 1-based field order to extract numeric value
+  final String? jsonKeyName; // optional key name to extract value
   final String? username;
   final String? password;
   final void Function(double) onMessage;
@@ -32,6 +35,9 @@ class MqttService {
   this.topic, {
   this.publishTopic,
   this.lastWillTopic,
+    this.payloadIsJson = false,
+    this.jsonFieldIndex = 1,
+  this.jsonKeyName,
     this.username,
     this.password,
     required this.onMessage,
@@ -179,12 +185,17 @@ class MqttService {
 
     // Otherwise handle main numeric topic
     if (topicStr == topic) {
-      final value = double.tryParse(payload.trim());
-      if (value != null) {
-        onMessage(value);
+      if (payloadIsJson) {
+        final val = _extractFromJson(payload, jsonFieldIndex, jsonKeyName);
+        if (val != null) onMessage(val);
       } else {
-        final maybe = _extractFirstNumber(payload);
-        if (maybe != null) onMessage(maybe);
+        final value = double.tryParse(payload.trim());
+        if (value != null) {
+          onMessage(value);
+        } else {
+          final maybe = _extractFirstNumber(payload);
+          if (maybe != null) onMessage(maybe);
+        }
       }
     }
   }
@@ -193,6 +204,37 @@ class MqttService {
     final regex = RegExp(r'[-+]?[0-9]*\.?[0-9]+');
     final match = regex.firstMatch(s);
     if (match != null) return double.tryParse(match.group(0)!);
+    return null;
+  }
+
+  double? _extractFromJson(String s, int order, String? keyName) {
+    try {
+      final decoded = jsonDecode(s);
+      if (decoded is Map) {
+        if (keyName != null && keyName.trim().isNotEmpty) {
+          final v = decoded[keyName];
+          if (v is num) return v.toDouble();
+          if (v is String) return double.tryParse(v.trim());
+          return null;
+        }
+        // Fallback by field order
+        final entries = decoded.entries.toList(growable: false);
+        if (order <= 0 || order > entries.length) return null;
+        final v = entries[order - 1].value;
+        if (v is num) return v.toDouble();
+        // Try parse string values
+        if (v is String) return double.tryParse(v.trim());
+        return null;
+      }
+      // If array, allow order indexing too
+      if (decoded is List) {
+        if (order <= 0 || order > decoded.length) return null;
+        final v = decoded[order - 1];
+        if (v is num) return v.toDouble();
+        if (v is String) return double.tryParse(v.trim());
+        return null;
+      }
+    } catch (_) {}
     return null;
   }
 

@@ -31,6 +31,10 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   late TextEditingController _offsetController;
   // Last Will / Presence
   late TextEditingController _lastWillTopicController;
+  // Payload JSON options
+  bool _payloadIsJson = false;
+  late TextEditingController _jsonFieldIndexController;
+  late TextEditingController _jsonKeyNameController;
   // Control button
   bool _useControlButton = false;
   late TextEditingController _controlTopicController;
@@ -74,6 +78,10 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   _autoControl = p?.autoControl ?? false;
   _controlRetained = p?.controlRetained ?? false;
   _controlQos = p?.controlQos ?? MqttQosLevel.atLeastOnce;
+  // JSON payload
+  _payloadIsJson = p?.payloadIsJson ?? false;
+  _jsonFieldIndexController = TextEditingController(text: (p?.jsonFieldIndex ?? 1).toString());
+  _jsonKeyNameController = TextEditingController(text: p?.jsonKeyName ?? '');
   }
 
   @override
@@ -96,6 +104,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   _onValueController.dispose();
   _offValueController.dispose();
   _lastWillTopicController.dispose();
+  _jsonFieldIndexController.dispose();
+  _jsonKeyNameController.dispose();
     super.dispose();
   }
 
@@ -120,6 +130,9 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
         multiplier: double.tryParse(_multiplierController.text) ?? 1.0,
         offset: double.tryParse(_offsetController.text) ?? 0.0,
   lastWillTopic: _lastWillTopicController.text.trim().isEmpty ? null : _lastWillTopicController.text.trim(),
+  payloadIsJson: _payloadIsJson,
+  jsonFieldIndex: int.tryParse(_jsonFieldIndexController.text.trim())?.clamp(1, 9999) ?? 1,
+  jsonKeyName: _jsonKeyNameController.text.trim().isEmpty ? null : _jsonKeyNameController.text.trim(),
   useControlButton: _useControlButton,
   controlTopic: _controlTopicController.text.trim().isEmpty ? null : _controlTopicController.text.trim(),
   controlMode: _controlMode,
@@ -253,6 +266,35 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                               ),
                             ),
                           ]),
+                          const SizedBox(height: 12),
+                          // Payload parsing options
+                          CheckboxListTile(
+                            contentPadding: EdgeInsets.zero,
+                            controlAffinity: ListTileControlAffinity.leading,
+                            title: const Text('Payload is JSON'),
+                            subtitle: const Text('Extract numeric value from JSON by field order'),
+                            value: _payloadIsJson,
+                            onChanged: (v) => setState(() => _payloadIsJson = v ?? false),
+                          ),
+                          if (_payloadIsJson) ...[
+                            const SizedBox(height: 8),
+                            TextFormField(
+                              controller: _jsonFieldIndexController,
+                              decoration: dec('JSON field order (1 = first)', Icons.filter_1),
+                              keyboardType: TextInputType.number,
+                              validator: (value) {
+                                if (!_payloadIsJson) return null;
+                                final n = int.tryParse(value ?? '');
+                                if (n == null || n <= 0) return 'Enter a positive integer';
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 8),
+                            TextFormField(
+                              controller: _jsonKeyNameController,
+                              decoration: dec('JSON key name (optional)', Icons.key),
+                            ),
+                          ],
                           const SizedBox(height: 12),
                           TextFormField(
                             controller: _lastWillTopicController,

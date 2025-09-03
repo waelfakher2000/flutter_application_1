@@ -616,6 +616,10 @@ class _ProjectListPageState extends State<ProjectListPage> {
               controlRetained: project.controlRetained,
               controlQos: project.controlQos,
               lastWillTopic: project.lastWillTopic,
+              // New payload parsing options
+              payloadIsJson: project.payloadIsJson,
+              jsonFieldIndex: project.jsonFieldIndex,
+              jsonKeyName: project.jsonKeyName,
             ),
           ),
         );

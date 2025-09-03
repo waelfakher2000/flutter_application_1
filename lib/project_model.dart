@@ -33,6 +33,10 @@ class Project {
   String? lastWillTopic;
   // Grouping
   String? groupId;
+  // Payload parsing
+  bool payloadIsJson;
+  int jsonFieldIndex; // 1-based order inside JSON object
+  String? jsonKeyName; // optional key name to extract from JSON
 
   Project({
     String? id,
@@ -62,6 +66,9 @@ class Project {
   this.controlQos = MqttQosLevel.atLeastOnce,
   this.lastWillTopic,
   this.groupId,
+  this.payloadIsJson = false,
+  this.jsonFieldIndex = 1,
+  this.jsonKeyName,
   }) : id = id ?? const Uuid().v4();
 
   Map<String, dynamic> toJson() {
@@ -93,6 +100,9 @@ class Project {
   'controlQos': controlQos.toString(),
   'lastWillTopic': lastWillTopic,
   'groupId': groupId,
+  'payloadIsJson': payloadIsJson,
+  'jsonFieldIndex': jsonFieldIndex,
+  'jsonKeyName': jsonKeyName,
     };
   }
 
@@ -131,6 +141,11 @@ class Project {
       ),
   lastWillTopic: json['lastWillTopic'],
   groupId: json['groupId'],
+  payloadIsJson: json['payloadIsJson'] == true,
+  jsonFieldIndex: (json['jsonFieldIndex'] is int)
+      ? json['jsonFieldIndex']
+      : int.tryParse('${json['jsonFieldIndex'] ?? '1'}') ?? 1,
+  jsonKeyName: (json['jsonKeyName']?.toString().trim().isEmpty ?? true) ? null : json['jsonKeyName'].toString(),
     );
   }
 
@@ -173,6 +188,9 @@ class Project {
     MqttQosLevel? controlQos,
     String? lastWillTopic,
   String? groupId,
+  bool? payloadIsJson,
+  int? jsonFieldIndex,
+  String? jsonKeyName,
   }) {
     return Project(
       id: id ?? this.id,
@@ -202,6 +220,9 @@ class Project {
       controlQos: controlQos ?? this.controlQos,
       lastWillTopic: lastWillTopic ?? this.lastWillTopic,
   groupId: groupId ?? this.groupId,
+  payloadIsJson: payloadIsJson ?? this.payloadIsJson,
+  jsonFieldIndex: jsonFieldIndex ?? this.jsonFieldIndex,
+  jsonKeyName: jsonKeyName ?? this.jsonKeyName,
     );
   }
 }

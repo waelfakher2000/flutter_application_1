@@ -596,6 +596,10 @@ class MainTankPage extends StatefulWidget {
   final String? lastWillTopic;
 
   final String projectName;
+  // Payload parsing options
+  final bool payloadIsJson;
+  final int jsonFieldIndex;
+  final String? jsonKeyName;
   const MainTankPage({
     super.key,
     required this.broker,
@@ -623,6 +627,9 @@ class MainTankPage extends StatefulWidget {
   this.controlRetained = false,
   this.controlQos = MqttQosLevel.atLeastOnce,
   this.lastWillTopic,
+  this.payloadIsJson = false,
+  this.jsonFieldIndex = 1,
+  this.jsonKeyName,
   });
 
   @override
@@ -652,6 +659,9 @@ class _MainTankPageState extends State<MainTankPage> {
       widget.topic,
   publishTopic: widget.controlTopic,
   lastWillTopic: widget.lastWillTopic,
+  payloadIsJson: widget.payloadIsJson,
+  jsonFieldIndex: widget.jsonFieldIndex,
+  jsonKeyName: widget.jsonKeyName,
       username: widget.username,
       password: widget.password,
       onMessage: _onMessage,
