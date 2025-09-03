@@ -29,6 +29,10 @@ class Project {
   bool autoControl; // use min/max thresholds to auto toggle
   bool controlRetained; // publish retained
   MqttQosLevel controlQos; // publish QoS
+  // Presence (Last Will) subscription
+  String? lastWillTopic;
+  // Grouping
+  String? groupId;
 
   Project({
     String? id,
@@ -56,6 +60,8 @@ class Project {
   this.autoControl = false,
   this.controlRetained = false,
   this.controlQos = MqttQosLevel.atLeastOnce,
+  this.lastWillTopic,
+  this.groupId,
   }) : id = id ?? const Uuid().v4();
 
   Map<String, dynamic> toJson() {
@@ -85,6 +91,8 @@ class Project {
   'autoControl': autoControl,
   'controlRetained': controlRetained,
   'controlQos': controlQos.toString(),
+  'lastWillTopic': lastWillTopic,
+  'groupId': groupId,
     };
   }
 
@@ -121,6 +129,8 @@ class Project {
         (e) => e.toString() == (json['controlQos'] ?? MqttQosLevel.atLeastOnce.toString()),
         orElse: () => MqttQosLevel.atLeastOnce,
       ),
+  lastWillTopic: json['lastWillTopic'],
+  groupId: json['groupId'],
     );
   }
 
@@ -134,4 +144,64 @@ class Project {
       (json.decode(projects) as List<dynamic>)
           .map<Project>((item) => Project.fromJson(item))
           .toList();
+
+  Project copyWith({
+    String? id,
+    String? name,
+    String? broker,
+    int? port,
+    String? topic,
+    String? username,
+    String? password,
+    SensorType? sensorType,
+    TankType? tankType,
+    double? height,
+    double? diameter,
+    double? length,
+    double? width,
+    double? minThreshold,
+    double? maxThreshold,
+    double? multiplier,
+    double? offset,
+    bool? useControlButton,
+    String? controlTopic,
+    ControlMode? controlMode,
+    String? onValue,
+    String? offValue,
+    bool? autoControl,
+    bool? controlRetained,
+    MqttQosLevel? controlQos,
+    String? lastWillTopic,
+  String? groupId,
+  }) {
+    return Project(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      broker: broker ?? this.broker,
+      port: port ?? this.port,
+      topic: topic ?? this.topic,
+      username: username ?? this.username,
+      password: password ?? this.password,
+      sensorType: sensorType ?? this.sensorType,
+      tankType: tankType ?? this.tankType,
+      height: height ?? this.height,
+      diameter: diameter ?? this.diameter,
+      length: length ?? this.length,
+      width: width ?? this.width,
+      minThreshold: minThreshold ?? this.minThreshold,
+      maxThreshold: maxThreshold ?? this.maxThreshold,
+      multiplier: multiplier ?? this.multiplier,
+      offset: offset ?? this.offset,
+      useControlButton: useControlButton ?? this.useControlButton,
+      controlTopic: controlTopic ?? this.controlTopic,
+      controlMode: controlMode ?? this.controlMode,
+      onValue: onValue ?? this.onValue,
+      offValue: offValue ?? this.offValue,
+      autoControl: autoControl ?? this.autoControl,
+      controlRetained: controlRetained ?? this.controlRetained,
+      controlQos: controlQos ?? this.controlQos,
+      lastWillTopic: lastWillTopic ?? this.lastWillTopic,
+  groupId: groupId ?? this.groupId,
+    );
+  }
 }

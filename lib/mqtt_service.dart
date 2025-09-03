@@ -13,23 +13,30 @@ class MqttService {
   final int port;
   final String topic;
   final String? publishTopic; // optional control topic
+  final String? lastWillTopic; // optional presence/last will topic to subscribe
   final String? username;
   final String? password;
   final void Function(double) onMessage;
   final void Function(String) onStatus;
+  final void Function(String status)? onPresence;
 
   late mqtt.MqttClient client;
   int _reconnectAttempts = 0;
+  bool _shouldReconnect = true;
+  bool _isConnecting = false;
+  Timer? _reconnectTimer;
 
     MqttService(
     this.broker,
     this.port,
   this.topic, {
   this.publishTopic,
+  this.lastWillTopic,
     this.username,
     this.password,
     required this.onMessage,
     required this.onStatus,
+    this.onPresence,
   }) {
     final clientId = 'flutter_client_${DateTime.now().millisecondsSinceEpoch}';
 
@@ -100,7 +107,9 @@ class MqttService {
   }
 
   Future<void> connect() async {
-    onStatus('Connecting...');
+  if (_isConnecting) return;
+  _isConnecting = true;
+  onStatus('Connecting...');
     try {
       final connMess = mqtt.MqttConnectMessage()
           .withClientIdentifier(client.clientIdentifier)
@@ -117,7 +126,9 @@ class MqttService {
         await client.connect();
       }
 
-      _reconnectAttempts = 0;
+  _reconnectAttempts = 0;
+  _reconnectTimer?.cancel();
+  _isConnecting = false;
       onStatus('Connected');
       _subscribe();
       client.updates?.listen(_onMessage);
@@ -125,33 +136,56 @@ class MqttService {
       debugPrint('MQTT SocketException: $se');
       debugPrint('$st');
       onStatus('Network error: ${se.message}');
-      disconnect();
-      _reconnectAttempts++;
-      final delaySeconds = (pow(2, _reconnectAttempts) as double).clamp(1, 30).toInt();
-      Timer(Duration(seconds: delaySeconds), connect);
+  _isConnecting = false;
+  _scheduleReconnect();
     } catch (e, st) {
       debugPrint('MQTT connect error: $e');
       debugPrint('$st');
       onStatus('Error: $e');
-      disconnect();
+  _isConnecting = false;
+  _scheduleReconnect();
     }
   }
 
   void _subscribe() {
     client.subscribe(topic, mqtt.MqttQos.atMostOnce);
     onStatus('Subscribed to $topic');
+    if (lastWillTopic != null && lastWillTopic!.trim().isNotEmpty) {
+      client.subscribe(lastWillTopic!, mqtt.MqttQos.atMostOnce);
+      onStatus('Subscribed to $lastWillTopic');
+    }
   }
 
   void _onMessage(List<mqtt.MqttReceivedMessage<mqtt.MqttMessage>>? event) {
     if (event == null || event.isEmpty) return;
-    final recMess = event[0].payload as mqtt.MqttPublishMessage;
+    final msg = event[0];
+    final recMess = msg.payload as mqtt.MqttPublishMessage;
     final payload = mqtt.MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
-    final value = double.tryParse(payload.trim());
-    if (value != null) {
-      onMessage(value);
-    } else {
-      final maybe = _extractFirstNumber(payload);
-      if (maybe != null) onMessage(maybe);
+    final topicStr = msg.topic;
+
+    // If this is presence/last-will topic, parse JSON and emit status
+    if (lastWillTopic != null && topicStr == lastWillTopic && onPresence != null) {
+      try {
+        final decoded = jsonDecode(payload);
+        if (decoded is Map && decoded['status'] != null) {
+          final status = decoded['status'].toString();
+          onPresence!(status);
+          return;
+        }
+      } catch (_) {}
+      // If not JSON or no status, ignore
+      return;
+    }
+
+    // Otherwise handle main numeric topic
+    if (topicStr == topic) {
+      final value = double.tryParse(payload.trim());
+      if (value != null) {
+        onMessage(value);
+      } else {
+        final maybe = _extractFirstNumber(payload);
+        if (maybe != null) onMessage(maybe);
+      }
     }
   }
 
@@ -162,12 +196,33 @@ class MqttService {
     return null;
   }
 
-  void _onDisconnected() => onStatus('Disconnected');
+  void _onDisconnected() {
+    onStatus('Disconnected');
+    _isConnecting = false;
+    _scheduleReconnect();
+  }
   void _onConnected() => onStatus('Connected');
 
   void disconnect() {
+    _shouldReconnect = false;
+    _reconnectTimer?.cancel();
     try {
       client.disconnect();
     } catch (_) {}
+  }
+
+  void _scheduleReconnect() {
+    if (!_shouldReconnect) return;
+    if (client.connectionStatus?.state == mqtt.MqttConnectionState.connected) return;
+    if (_isConnecting) return;
+    _reconnectAttempts = (_reconnectAttempts + 1).clamp(1, 30);
+    final base = (pow(2, _reconnectAttempts) as double).clamp(1, 30).toInt();
+    final jitter = (base / 4).clamp(0, 5).toInt();
+    final delaySeconds = base + (jitter > 0 ? (DateTime.now().millisecondsSinceEpoch % jitter) : 0);
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(Duration(seconds: delaySeconds), () {
+      if (!_shouldReconnect) return;
+      connect();
+    });
   }
 }

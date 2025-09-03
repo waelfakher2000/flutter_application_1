@@ -292,7 +292,7 @@ class _MqttTopicPageState extends State<MqttTopicPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        appBar: AppBar(title: const Text('MQTT - Topic'), actions: [
+  appBar: AppBar(title: const Text('MQTT - Topic'), actions: [
           IconButton(
             icon: const Icon(Icons.bug_report),
             tooltip: 'Debug',
@@ -593,6 +593,7 @@ class MainTankPage extends StatefulWidget {
   final bool autoControl;
   final bool controlRetained;
   final MqttQosLevel controlQos;
+  final String? lastWillTopic;
 
   final String projectName;
   const MainTankPage({
@@ -621,6 +622,7 @@ class MainTankPage extends StatefulWidget {
   this.autoControl = false,
   this.controlRetained = false,
   this.controlQos = MqttQosLevel.atLeastOnce,
+  this.lastWillTopic,
   });
 
   @override
@@ -637,7 +639,9 @@ class _MainTankPageState extends State<MainTankPage> {
   double _level = 0.0; // computed level in meters (liquid height from bottom)
   Timer? _heartbeatTimer;
   String _connectionStatus = 'Disconnected';
+  String? _presenceStatus; // presence from last will topic, if configured
   bool _isOn = false; // current state for on/off or last state for toggle
+  // presence handled via _connectionStatus cloud icon
 
   @override
   void initState() {
@@ -647,10 +651,12 @@ class _MainTankPageState extends State<MainTankPage> {
       widget.port,
       widget.topic,
   publishTopic: widget.controlTopic,
+  lastWillTopic: widget.lastWillTopic,
       username: widget.username,
       password: widget.password,
       onMessage: _onMessage,
       onStatus: _onStatus,
+  onPresence: _onPresence,
     );
     _mqttService.connect();
     // start native foreground service for notifications when app closed
@@ -658,6 +664,21 @@ class _MainTankPageState extends State<MainTankPage> {
       _startNativeService();
     }
     debugPrint('Skipping bridge registration in MainTankPage.initState (local notifications only)');
+  }
+
+  void _onPresence(String status) {
+    if (!mounted) return;
+    setState(() {
+  _presenceStatus = status;
+      final ls = status.toLowerCase();
+      if (ls.contains('connected')) {
+        _connectionStatus = 'Connected';
+      } else if (ls.contains('disconnected')) {
+        _connectionStatus = 'Disconnected';
+      } else {
+        _connectionStatus = status;
+      }
+    });
   }
 
   Future<void> _publishControl(String value) async {
@@ -860,21 +881,33 @@ class _MainTankPageState extends State<MainTankPage> {
   }
 
   // Helper widget for stat cards
-  Widget _statCard(String title, String value) {
+  Widget _statCard(String title, String value, {double width = 110, double minHeight = 68, bool dense = false}) {
     final theme = Theme.of(context);
     return Card(
-      child: SizedBox(
-        width: 110,
-        height: 68,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minWidth: width, minHeight: minHeight),
         child: Padding(
           padding: const EdgeInsets.all(8.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(title, style: theme.textTheme.bodySmall),
-              const SizedBox(height: 6),
-              Text(value, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+              Text(
+                title,
+                style: theme.textTheme.bodySmall?.copyWith(fontSize: dense ? 11 : null),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              SizedBox(height: dense ? 4 : 6),
+              Text(
+                value,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  fontSize: dense ? 14 : null,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ],
           ),
         ),
@@ -891,18 +924,49 @@ class _MainTankPageState extends State<MainTankPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.projectName),
+        title: _ScrollingTitle(text: widget.projectName),
         actions: [
-          Consumer<ThemeProvider>(
-            builder: (context, themeProvider, child) {
-              return IconButton(
-                tooltip: 'Toggle Theme',
-                icon: Icon(themeProvider.themeMode == ThemeMode.dark ? Icons.dark_mode : Icons.light_mode),
-                onPressed: () {
-                  themeProvider.toggleTheme(themeProvider.themeMode == ThemeMode.light);
-                },
-              );
-            },
+          if (widget.lastWillTopic != null && widget.lastWillTopic!.trim().isNotEmpty)
+      Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4.0),
+              child: Tooltip(
+                message: _presenceStatus == null
+                    ? 'Last Will configured'
+                    : 'Presence: ${_presenceStatus!}',
+        child: Icon(
+          // Presence icon mapping to link-style glyphs
+          (_presenceStatus ?? '').toLowerCase().contains('connected') || (_presenceStatus ?? '').toLowerCase().contains('online')
+            ? Icons.link
+            : (_presenceStatus ?? '').toLowerCase().contains('disconnected') || (_presenceStatus ?? '').toLowerCase().contains('offline')
+              ? Icons.link_off
+              : Icons.link_outlined,
+          color: (_presenceStatus ?? '').toLowerCase().contains('connected') || (_presenceStatus ?? '').toLowerCase().contains('online')
+            ? Colors.green
+            : (_presenceStatus ?? '').toLowerCase().contains('disconnected') || (_presenceStatus ?? '').toLowerCase().contains('offline')
+              ? Colors.red
+              : Colors.amber,
+          size: 20,
+        ),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+            child: Tooltip(
+              message: _connectionStatus,
+              child: Icon(
+                _connectionStatus.toLowerCase().contains('connected') || _connectionStatus.toLowerCase().contains('subscribed')
+                    ? Icons.cloud_done
+                    : _connectionStatus.toLowerCase().contains('connecting')
+                        ? Icons.cloud_queue
+                        : Icons.cloud_off,
+                color: _connectionStatus.toLowerCase().contains('connected') || _connectionStatus.toLowerCase().contains('subscribed')
+                    ? Colors.green
+                    : _connectionStatus.toLowerCase().contains('connecting')
+                        ? Colors.amber
+                        : Colors.red,
+                size: 20,
+              ),
+            ),
           ),
           IconButton(
             tooltip: 'Notification settings',
@@ -911,6 +975,7 @@ class _MainTankPageState extends State<MainTankPage> {
               try {
                 await _settingsChannel.invokeMethod('openAppNotificationSettings');
               } catch (e) {
+                if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not open settings')));
               }
             },
@@ -919,74 +984,223 @@ class _MainTankPageState extends State<MainTankPage> {
       ),
       body: Padding(
         padding: const EdgeInsets.all(12),
-        child: Column(children: [
-          // statistics
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _statCard('Liquid %', '${percent.toStringAsFixed(1)} %'),
-              _statCard('Level (m)', '${_level.toStringAsFixed(3)} m'),
-              _statCard('Liquid L', '${(liquidM3 * 1000).toStringAsFixed(2)} L'),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _statCard('Empty L', '${(emptyM3 * 1000).toStringAsFixed(2)} L'),
-              _statCard('Total L', '${(totalM3 * 1000).toStringAsFixed(2)} L'),
-              _statCard('Empty (m)', (widget.height - _level).toStringAsFixed(3)),
-            ],
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            height: 300, // Set a fixed height for the tank
-            width: 200, // Set a fixed width for the tank
-            child: TankWidget(
-              tankType: widget.tankType,
-              waterLevel: _level / widget.height,
-              minThreshold: widget.minThreshold != null ? widget.minThreshold! / widget.height : null,
-              maxThreshold: widget.maxThreshold != null ? widget.maxThreshold! / widget.height : null,
-              volume: liquidM3 * 1000,
-              percentage: percent,
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (widget.useControlButton)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // Base sizes
+            const double baseCloudH = 30; // approx chip height
+            const double baseStatH = 68;
+            const double baseRowGap = 8; // gap between rows and after chip
+            const double baseTankH = 260; // reverted to previous visual size
+            const double baseBeforeTank = 16;
+            const double baseAfterTank = 12;
+            const double baseButtonH = 44;
+            const double baseAfterButton = 12;
+
+            final bool hasControl = widget.useControlButton;
+      final double baseTotal =
+        baseCloudH +
+        baseStatH * 2 + // two stat rows
+        baseRowGap * 2 + // after chip + between stat rows
+                baseBeforeTank +
+                baseTankH +
+                baseAfterTank +
+                (hasControl ? baseButtonH + baseAfterButton : 0) +
+                40; // Back button approx
+
+            final double scale = (constraints.maxHeight / baseTotal).clamp(0.75, 1.0);
+            final double statH = baseStatH * scale;
+            final double tankH = baseTankH * scale;
+            final double rowGap = baseRowGap * scale;
+            final double beforeTank = baseBeforeTank * scale;
+            final double afterTank = baseAfterTank * scale;
+            final double btnH = baseButtonH * scale;
+            final double afterBtn = baseAfterButton * scale;
+            final bool dense = scale < 0.95;
+
+      // Map connection status to UI
+            // connection status used in AppBar cloud icon tooltip; no body UI here
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                FilledButton(
-                  onPressed: _toggleOrSet,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _isOn ? Colors.green : Colors.grey,
-                    foregroundColor: _isOn ? Colors.white : Colors.black87,
-                    minimumSize: const Size(140, 44),
+                // statistics (clamp text scale inside cards to avoid overflow)
+                MediaQuery(
+                  data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _statCard('Liquid %', '${percent.toStringAsFixed(1)} %', minHeight: statH, dense: dense),
+                      _statCard('Level (m)', '${_level.toStringAsFixed(3)} m', minHeight: statH, dense: dense),
+                      _statCard('Liquid L', '${(liquidM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+                    ],
                   ),
-                  child: Text(_isOn ? 'ON' : 'OFF'),
+                ),
+                SizedBox(height: rowGap),
+                MediaQuery(
+                  data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _statCard('Empty L', '${(emptyM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+                      _statCard('Total L', '${(totalM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+                      _statCard('Empty (m)', (widget.height - _level).toStringAsFixed(3), minHeight: statH, dense: dense),
+                    ],
+                  ),
+                ),
+                SizedBox(height: beforeTank),
+                Center(
+                  child: SizedBox(
+                    height: tankH,
+                    width: (tankH * 0.65).clamp(140.0, 200.0),
+                    child: TankWidget(
+                      tankType: widget.tankType,
+                      waterLevel: _level / widget.height,
+                      minThreshold: widget.minThreshold != null ? widget.minThreshold! / widget.height : null,
+                      maxThreshold: widget.maxThreshold != null ? widget.maxThreshold! / widget.height : null,
+                      volume: liquidM3 * 1000,
+                      percentage: percent,
+                    ),
+                  ),
+                ),
+                SizedBox(height: afterTank),
+                if (hasControl)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        height: btnH,
+                        child: FilledButton(
+                          onPressed: _toggleOrSet,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _isOn ? Colors.green : Colors.grey,
+                            foregroundColor: _isOn ? Colors.white : Colors.black87,
+                            minimumSize: Size(140 * scale, btnH),
+                          ),
+                          child: Text(_isOn ? 'ON' : 'OFF'),
+                        ),
+                      ),
+                    ],
+                  ),
+                if (hasControl) SizedBox(height: afterBtn),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (_) => const ProjectListPage()),
+                    );
+                  },
+                  child: const Text('Back to Projects'),
                 ),
               ],
-            ),
-          const SizedBox(height: 12),
-          ElevatedButton(
-              onPressed: () {
-                // go back to setup (reconnect lifecycle)
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (_) => const ProjectListPage()),
-                );
-              },
-              child: const Text('Back to Projects')),
-        ]),
-      ),
-      bottomNavigationBar: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Text(
-          _connectionStatus,
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.bodySmall,
+            );
+          },
         ),
       ),
+    );
+  }
+}
+
+// Scrolling title (marquee) for long project names in AppBar
+class _ScrollingTitle extends StatefulWidget {
+  final String text;
+  const _ScrollingTitle({Key? key, required this.text}) : super(key: key);
+  @override
+  State<_ScrollingTitle> createState() => _ScrollingTitleState();
+}
+
+class _ScrollingTitleState extends State<_ScrollingTitle> with SingleTickerProviderStateMixin {
+  late final ScrollController _scrollController;
+  late final AnimationController _controller;
+  double _textWidth = 0;
+  double _lastTotalWidth = -1;
+  static const double _gap = 48; // px gap between copies
+  static const double _pxPerSecond = 60; // scroll speed
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+    _controller = AnimationController(vsync: this);
+
+    _controller.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        _controller.forward(from: 0.0);
+      }
+    });
+    _controller.addListener(() {
+      if (!_scrollController.hasClients) return;
+      final totalWidth = _textWidth + _gap;
+      final double offset = _controller.value * totalWidth;
+      _scrollController.jumpTo(offset);
+    });
+  }
+
+  void _restartMarquee(double totalWidth) {
+    _lastTotalWidth = totalWidth;
+    final ms = (totalWidth / _pxPerSecond * 1000).clamp(800, 60000).toInt();
+    _controller.duration = Duration(milliseconds: ms);
+    if (mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_scrollController.hasClients) return;
+        _scrollController.jumpTo(0);
+        _controller.forward(from: 0.0);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.titleLarge;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Measure text width
+        final tp = TextPainter(
+          text: TextSpan(text: widget.text, style: style),
+          textDirection: TextDirection.ltr,
+          maxLines: 1,
+        )..layout();
+        _textWidth = tp.width;
+
+        final needsScroll = _textWidth > constraints.maxWidth;
+        if (!needsScroll) {
+          // Stop animation when not needed
+          if (_controller.isAnimating) _controller.stop();
+          return Text(widget.text, style: style, overflow: TextOverflow.ellipsis, maxLines: 1);
+        }
+
+        final totalWidth = _textWidth + _gap; // distance to loop
+        if (_lastTotalWidth != totalWidth) {
+          _restartMarquee(totalWidth);
+        } else if (!_controller.isAnimating) {
+          _controller.forward(from: 0.0);
+        }
+
+        // Scrollable viewport prevents overflow while we animate the offset
+        return SizedBox(
+          height: kToolbarHeight,
+          child: ClipRect(
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              scrollDirection: Axis.horizontal,
+              physics: const NeverScrollableScrollPhysics(),
+              child: Row(
+                children: [
+                  Text(widget.text, style: style),
+                  const SizedBox(width: _gap),
+                  Text(widget.text, style: style), // second copy for seamless loop
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

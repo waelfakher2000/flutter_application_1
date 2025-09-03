@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_application_1/project_model.dart';
 import 'package:flutter_application_1/types.dart';
 
@@ -8,7 +9,7 @@ class ProjectEditPage extends StatefulWidget {
   const ProjectEditPage({super.key, this.project});
 
   @override
-  _ProjectEditPageState createState() => _ProjectEditPageState();
+  State<ProjectEditPage> createState() => _ProjectEditPageState();
 }
 
 class _ProjectEditPageState extends State<ProjectEditPage> {
@@ -28,6 +29,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   late TextEditingController _maxController;
   late TextEditingController _multiplierController;
   late TextEditingController _offsetController;
+  // Last Will / Presence
+  late TextEditingController _lastWillTopicController;
   // Control button
   bool _useControlButton = false;
   late TextEditingController _controlTopicController;
@@ -61,6 +64,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
     _maxController = TextEditingController(text: p?.maxThreshold?.toString());
     _multiplierController = TextEditingController(text: p?.multiplier.toString() ?? '1.0');
     _offsetController = TextEditingController(text: p?.offset.toString() ?? '0.0');
+  _lastWillTopicController = TextEditingController(text: p?.lastWillTopic ?? '');
   // Control button
   _useControlButton = p?.useControlButton ?? false;
   _controlTopicController = TextEditingController(text: p?.controlTopic ?? '');
@@ -91,6 +95,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   _controlTopicController.dispose();
   _onValueController.dispose();
   _offValueController.dispose();
+  _lastWillTopicController.dispose();
     super.dispose();
   }
 
@@ -114,6 +119,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
         maxThreshold: _maxController.text.isNotEmpty ? double.parse(_maxController.text) : null,
         multiplier: double.tryParse(_multiplierController.text) ?? 1.0,
         offset: double.tryParse(_offsetController.text) ?? 0.0,
+  lastWillTopic: _lastWillTopicController.text.trim().isEmpty ? null : _lastWillTopicController.text.trim(),
   useControlButton: _useControlButton,
   controlTopic: _controlTopicController.text.trim().isEmpty ? null : _controlTopicController.text.trim(),
   controlMode: _controlMode,
@@ -130,12 +136,12 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    InputDecoration _dec(String label, IconData icon, {String? hint}) => InputDecoration(
+    InputDecoration dec(String label, IconData icon, {String? hint}) => InputDecoration(
           labelText: label,
           hintText: hint,
           prefixIcon: Icon(icon),
           filled: true,
-          fillColor: scheme.surfaceVariant.withOpacity(0.25),
+          fillColor: scheme.surfaceContainerHighest.withOpacity(0.25),
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
@@ -167,7 +173,12 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.project == null ? 'Add Project' : 'Edit Project'),
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        foregroundColor: Theme.of(context).colorScheme.onPrimary,
+        title: Text(
+          widget.project == null ? 'Add Project' : 'Edit Project',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w700, letterSpacing: 0.5),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.save),
@@ -202,7 +213,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                         children: [
                           TextFormField(
                             controller: _brokerController,
-                            decoration: _dec('MQTT Broker', Icons.dns, hint: 'e.g. test.mosquitto.org'),
+                            decoration: dec('MQTT Broker', Icons.dns, hint: 'e.g. test.mosquitto.org'),
                             validator: (value) => value!.isEmpty ? 'Please enter a broker' : null,
                           ),
                           const SizedBox(height: 12),
@@ -210,7 +221,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                             Expanded(
                               child: TextFormField(
                                 controller: _portController,
-                                decoration: _dec('Port', Icons.numbers, hint: '1883'),
+                                decoration: dec('Port', Icons.numbers, hint: '1883'),
                                 keyboardType: TextInputType.number,
                                 validator: (value) => value!.isEmpty || int.tryParse(value) == null ? 'Enter a valid port' : null,
                               ),
@@ -220,7 +231,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                               flex: 2,
                               child: TextFormField(
                                 controller: _topicController,
-                                decoration: _dec('Subscribe Topic', Icons.topic, hint: 'e.g. tank/level'),
+                                decoration: dec('Subscribe Topic', Icons.topic, hint: 'e.g. tank/level'),
                                 validator: (value) => value!.isEmpty ? 'Please enter a topic' : null,
                               ),
                             ),
@@ -230,18 +241,23 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                             Expanded(
                               child: TextFormField(
                                 controller: _usernameController,
-                                decoration: _dec('Username (optional)', Icons.person),
+                                decoration: dec('Username (optional)', Icons.person),
                               ),
                             ),
                             const SizedBox(width: 12),
                             Expanded(
                               child: TextFormField(
                                 controller: _passwordController,
-                                decoration: _dec('Password (optional)', Icons.lock),
+                                decoration: dec('Password (optional)', Icons.lock),
                                 obscureText: true,
                               ),
                             ),
                           ]),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: _lastWillTopicController,
+                            decoration: dec('Presence / Last Will Topic (optional)', Icons.personal_injury, hint: 'e.g. devices/sn/lastwill'),
+                          ),
                           const SizedBox(height: 4),
                           Align(
                             alignment: Alignment.centerLeft,
@@ -269,13 +285,13 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                         children: [
                           TextFormField(
                             controller: _multiplierController,
-                            decoration: _dec('Multiplier', Icons.calculate, hint: 'new = value * multiplier + offset'),
+                            decoration: dec('Multiplier', Icons.calculate, hint: 'new = value * multiplier + offset'),
                             keyboardType: TextInputType.number,
                           ),
                           const SizedBox(height: 12),
                           TextFormField(
                             controller: _offsetController,
-                            decoration: _dec('Offset', Icons.exposure),
+                            decoration: dec('Offset', Icons.exposure),
                             keyboardType: TextInputType.number,
                           ),
                         ],
@@ -307,7 +323,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                           if (_useControlButton) ...[
                             TextFormField(
                               controller: _controlTopicController,
-                              decoration: _dec('Publish Topic', Icons.publish),
+                              decoration: dec('Publish Topic', Icons.publish),
                               validator: (value) {
                                 if (_useControlButton) {
                                   if (value == null || value.trim().isEmpty) return 'Please enter a publish topic';
@@ -320,8 +336,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                               width: double.infinity,
                               child: DropdownButtonFormField<ControlMode>(
                                 isExpanded: true,
-                                value: _controlMode,
-                                decoration: _dec('Mode', Icons.tune),
+                                initialValue: _controlMode,
+                                decoration: dec('Mode', Icons.tune),
                                 items: const [
                                   DropdownMenuItem(value: ControlMode.onOff, child: Text('On/Off')),
                                   DropdownMenuItem(value: ControlMode.toggle, child: Text('Toggle')),
@@ -334,14 +350,14 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                               Expanded(
                                 child: TextFormField(
                                   controller: _onValueController,
-                                  decoration: _dec('On value', Icons.toggle_on),
+                                  decoration: dec('On value', Icons.toggle_on),
                                 ),
                               ),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: TextFormField(
                                   controller: _offValueController,
-                                  decoration: _dec('Off value', Icons.toggle_off),
+                                  decoration: dec('Off value', Icons.toggle_off),
                                 ),
                               ),
                             ]),
@@ -350,8 +366,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                               width: double.infinity,
                               child: DropdownButtonFormField<MqttQosLevel>(
                                 isExpanded: true,
-                                value: _controlQos,
-                                decoration: _dec('QoS', Icons.network_check),
+                                initialValue: _controlQos,
+                                decoration: dec('QoS', Icons.network_check),
                                 items: const [
                                   DropdownMenuItem(value: MqttQosLevel.atMostOnce, child: Text('At most once (0)')),
                                   DropdownMenuItem(value: MqttQosLevel.atLeastOnce, child: Text('At least once (1)')),
@@ -406,8 +422,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                       child: Column(
                         children: [
                           DropdownButtonFormField<SensorType>(
-                            value: _sensorType,
-                            decoration: _dec('Sensor Type', Icons.sensors),
+                            initialValue: _sensorType,
+                            decoration: dec('Sensor Type', Icons.sensors),
                             items: SensorType.values.map((SensorType type) {
                               return DropdownMenuItem<SensorType>(
                                 value: type,
@@ -422,8 +438,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                           ),
                           const SizedBox(height: 12),
                           DropdownButtonFormField<TankType>(
-                            value: _tankType,
-                            decoration: _dec('Tank Type', Icons.inventory_2),
+                            initialValue: _tankType,
+                            decoration: dec('Tank Type', Icons.inventory_2),
                             items: TankType.values.map((TankType type) {
                               return DropdownMenuItem<TankType>(
                                 value: type,
@@ -440,7 +456,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                           if (_tankType == TankType.verticalCylinder || _tankType == TankType.rectangle)
                             TextFormField(
                               controller: _heightController,
-                              decoration: _dec('Height (m)', Icons.height),
+                              decoration: dec('Height (m)', Icons.height),
                               keyboardType: TextInputType.number,
                               validator: (value) => value!.isEmpty || double.tryParse(value) == null ? 'Please enter a valid height' : null,
                             ),
@@ -449,7 +465,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                               const SizedBox(height: 12),
                             TextFormField(
                               controller: _diameterController,
-                              decoration: _dec('Diameter (m)', Icons.circle_outlined),
+                              decoration: dec('Diameter (m)', Icons.circle_outlined),
                               keyboardType: TextInputType.number,
                               validator: (value) => value!.isEmpty || double.tryParse(value) == null ? 'Please enter a valid diameter' : null,
                             ),
@@ -458,7 +474,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                             const SizedBox(height: 12),
                             TextFormField(
                               controller: _lengthController,
-                              decoration: _dec('Length (m)', Icons.swap_horiz),
+                              decoration: dec('Length (m)', Icons.swap_horiz),
                               keyboardType: TextInputType.number,
                               validator: (value) => value!.isEmpty || double.tryParse(value) == null ? 'Please enter a valid length' : null,
                             ),
@@ -467,7 +483,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                             const SizedBox(height: 12),
                             TextFormField(
                               controller: _widthController,
-                              decoration: _dec('Width (m)', Icons.swap_horiz),
+                              decoration: dec('Width (m)', Icons.swap_horiz),
                               keyboardType: TextInputType.number,
                               validator: (value) => value!.isEmpty || double.tryParse(value) == null ? 'Please enter a valid width' : null,
                             ),
@@ -475,13 +491,13 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                           const SizedBox(height: 12),
                           TextFormField(
                             controller: _minController,
-                            decoration: _dec('Min Threshold (m) (optional)', Icons.arrow_downward),
+                            decoration: dec('Min Threshold (m) (optional)', Icons.arrow_downward),
                             keyboardType: TextInputType.number,
                           ),
                           const SizedBox(height: 12),
                           TextFormField(
                             controller: _maxController,
-                            decoration: _dec('Max Threshold (m) (optional)', Icons.arrow_upward),
+                            decoration: dec('Max Threshold (m) (optional)', Icons.arrow_upward),
                             keyboardType: TextInputType.number,
                           ),
                         ],

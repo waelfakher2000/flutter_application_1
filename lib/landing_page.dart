@@ -1,9 +1,6 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_application_1/project_list_page.dart';
-import 'main.dart'; // Import your main app file
-import 'types.dart';
+// Import your main app file
 
 class LandingPage extends StatefulWidget {
   const LandingPage({super.key});
