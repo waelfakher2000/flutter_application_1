@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.CAMERA" />
     <application
-        android:label="flutter_application_1"
+        android:label="IoT Monitoring"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
         <activity

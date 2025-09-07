@@ -1,0 +1,102 @@
+workflows:
+  ios_testflight:
+    name: iOS IPA (TestFlight via App Store Connect)
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    environment:
+      flutter: stable
+      xcode: 15.4
+      cocoapods: default
+      groups:
+        - app_store_connect # Define in Codemagic UI: APP_STORE_CONNECT_ISSUER_ID, APP_STORE_CONNECT_KEY_IDENTIFIER, APP_STORE_CONNECT_PRIVATE_KEY, BUNDLE_ID
+      vars:
+        BUNDLE_ID: $BUNDLE_ID
+    scripts:
+      - name: Flutter dependencies
+        script: |
+          flutter clean
+          flutter pub get
+      - name: Set up keychain and fetch signing files (App Store Connect API)
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files \
+            --api-key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --api-key-issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --api-private-key "$APP_STORE_CONNECT_PRIVATE_KEY" \
+            --type IOS_APP_STORE \
+            --bundle-id "$BUNDLE_ID"
+          keychain add-certificates
+      - name: Apply provisioning profiles to Xcode project
+        script: |
+          xcode-project use-profiles
+      - name: Build signed IPA
+        script: |
+          flutter build ipa --release
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/archive/*.xcarchive
+      - flutter_drive.log
+    publishing:
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        submit_to_testflight: true
+
+  ios_unsigned_archive:
+    name: iOS unsigned archive (no Apple account)
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    environment:
+      flutter: stable
+      xcode: 15.4
+      cocoapods: default
+    scripts:
+      - name: Flutter dependencies
+        script: |
+          flutter clean
+          flutter pub get
+      - name: Build archive without code signing
+        script: |
+          flutter build ios --release --no-codesign
+    artifacts:
+      - build/ios/archive/*.xcarchive
+      - flutter_drive.log
+
+  ios_adhoc:
+    name: iOS Ad Hoc (install on specific devices)
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    environment:
+      flutter: stable
+      xcode: 15.4
+      cocoapods: default
+      groups:
+        - app_store_connect # Same group as used for TestFlight
+      vars:
+        BUNDLE_ID: $BUNDLE_ID
+    scripts:
+      - name: Flutter dependencies
+        script: |
+          flutter clean
+          flutter pub get
+      - name: Set up keychain and fetch Ad Hoc signing files (App Store Connect API)
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files \
+            --api-key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --api-key-issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --api-private-key "$APP_STORE_CONNECT_PRIVATE_KEY" \
+            --type IOS_APP_ADHOC \
+            --bundle-id "$BUNDLE_ID"
+          keychain add-certificates
+      - name: Apply provisioning profiles to Xcode project
+        script: |
+          xcode-project use-profiles
+      - name: Build signed IPA (Ad Hoc)
+        script: |
+          flutter build ipa --release
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/archive/*.xcarchive
+      - flutter_drive.log

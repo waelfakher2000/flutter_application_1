@@ -18,12 +18,18 @@ import 'package:mqtt_client/mqtt_client.dart' as mqtt;
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
 Future<void> initializeLocalNotifications() async {
-  const AndroidInitializationSettings initializationSettingsAndroid =
-      AndroidInitializationSettings('@mipmap/ic_launcher');
-  const InitializationSettings initializationSettings = InitializationSettings(
-    android: initializationSettingsAndroid,
-  );
-  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  try {
+    // Use the actual launcher icon name configured by flutter_launcher_icons
+    const AndroidInitializationSettings initializationSettingsAndroid =
+        AndroidInitializationSettings('@mipmap/launcher_icon');
+    const InitializationSettings initializationSettings = InitializationSettings(
+      android: initializationSettingsAndroid,
+    );
+    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  } catch (e) {
+    // Don’t crash in release if notification init fails (e.g., missing resource)
+    debugPrint('Local notifications init error: $e');
+  }
 }
 
 Future<void> showLocalNotification({
@@ -71,7 +77,7 @@ class TankApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
     return MaterialApp(
-      title: 'Tank Monitor',
+      title: 'IoT Monitoring',
       theme: ThemeData(
         brightness: Brightness.light,
         primarySwatch: Colors.blue,
@@ -600,6 +606,10 @@ class MainTankPage extends StatefulWidget {
   final bool payloadIsJson;
   final int jsonFieldIndex;
   final String? jsonKeyName;
+  // Timestamp parsing options
+  final bool displayTimeFromJson;
+  final int jsonTimeFieldIndex;
+  final String? jsonTimeKeyName;
   const MainTankPage({
     super.key,
     required this.broker,
@@ -630,6 +640,9 @@ class MainTankPage extends StatefulWidget {
   this.payloadIsJson = false,
   this.jsonFieldIndex = 1,
   this.jsonKeyName,
+  this.displayTimeFromJson = false,
+  this.jsonTimeFieldIndex = 1,
+  this.jsonTimeKeyName,
   });
 
   @override
@@ -648,6 +661,7 @@ class _MainTankPageState extends State<MainTankPage> {
   String _connectionStatus = 'Disconnected';
   String? _presenceStatus; // presence from last will topic, if configured
   bool _isOn = false; // current state for on/off or last state for toggle
+  DateTime? _lastTimestamp; // last parsed timestamp
   // presence handled via _connectionStatus cloud icon
 
   @override
@@ -662,11 +676,15 @@ class _MainTankPageState extends State<MainTankPage> {
   payloadIsJson: widget.payloadIsJson,
   jsonFieldIndex: widget.jsonFieldIndex,
   jsonKeyName: widget.jsonKeyName,
+  displayTimeFromJson: widget.displayTimeFromJson,
+  jsonTimeFieldIndex: widget.jsonTimeFieldIndex,
+  jsonTimeKeyName: widget.jsonTimeKeyName,
       username: widget.username,
       password: widget.password,
       onMessage: _onMessage,
       onStatus: _onStatus,
   onPresence: _onPresence,
+  onTimestamp: _onTimestamp,
     );
     _mqttService.connect();
     // start native foreground service for notifications when app closed
@@ -674,6 +692,13 @@ class _MainTankPageState extends State<MainTankPage> {
       _startNativeService();
     }
     debugPrint('Skipping bridge registration in MainTankPage.initState (local notifications only)');
+  }
+
+  void _onTimestamp(DateTime ts) {
+    if (!mounted) return;
+    setState(() {
+      _lastTimestamp = ts;
+    });
   }
 
   void _onPresence(String status) {
@@ -847,6 +872,15 @@ class _MainTankPageState extends State<MainTankPage> {
     } catch (e) {
       debugPrint('Notification channel error: $e');
     }
+  }
+
+  String _two(int n) => n.toString().padLeft(2, '0');
+  String _formatTs(DateTime dt) {
+    final now = DateTime.now();
+    final sameDay = now.year == dt.year && now.month == dt.month && now.day == dt.day;
+    final hms = '${_two(dt.hour)}:${_two(dt.minute)}:${_two(dt.second)}';
+    if (sameDay) return hms;
+    return '${dt.year}-${_two(dt.month)}-${_two(dt.day)} $hms';
   }
 
   // Volume calculators
@@ -1033,15 +1067,34 @@ class _MainTankPageState extends State<MainTankPage> {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // statistics (clamp text scale inside cards to avoid overflow)
+                // Last update label (optional) and statistics (clamp text scale inside cards to avoid overflow)
                 MediaQuery(
                   data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  child: Column(
                     children: [
-                      _statCard('Liquid %', '${percent.toStringAsFixed(1)} %', minHeight: statH, dense: dense),
-                      _statCard('Level (m)', '${_level.toStringAsFixed(3)} m', minHeight: statH, dense: dense),
-                      _statCard('Liquid L', '${(liquidM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+                      if (widget.displayTimeFromJson && _lastTimestamp != null) ...[
+                        Padding(
+                          padding: EdgeInsets.only(bottom: rowGap * 0.75),
+                          child: Align(
+                            alignment: Alignment.center,
+                            child: Text(
+                              'Last update: ${_formatTs(_lastTimestamp!)}',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.bodyMedium,
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
+                          ),
+                        ),
+                      ],
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          _statCard('Liquid %', '${percent.toStringAsFixed(1)} %', minHeight: statH, dense: dense),
+                          _statCard('Level (m)', '${_level.toStringAsFixed(3)} m', minHeight: statH, dense: dense),
+                          _statCard('Liquid L', '${(liquidM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+                        ],
+                      ),
                     ],
                   ),
                 ),

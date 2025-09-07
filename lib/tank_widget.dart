@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'types.dart';
 
@@ -23,39 +24,55 @@ class TankWidget extends StatefulWidget {
   State<TankWidget> createState() => _TankWidgetState();
 }
 
-class _TankWidgetState extends State<TankWidget> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _animation;
+class _TankWidgetState extends State<TankWidget> with TickerProviderStateMixin {
+  // Animates level transitions (on data updates)
+  late AnimationController _levelController;
+  late Animation<double> _levelAnimation;
   double _animatedLevel = 0.0;
+
+  // Continuous wave animation (purely visual)
+  late AnimationController _waveController;
 
   @override
   void initState() {
     super.initState();
     _animatedLevel = widget.waterLevel;
-    _controller = AnimationController(
+    _levelController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 500),
     );
-    _animation = Tween<double>(begin: _animatedLevel, end: widget.waterLevel).animate(_controller)
+    _levelAnimation = Tween<double>(begin: _animatedLevel, end: widget.waterLevel).animate(_levelController)
       ..addListener(() {
         setState(() {});
       });
-    _controller.forward();
+    _levelController.forward();
+
+    _waveController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2800),
+    )
+      ..addListener(() {
+        // drive repaint for waves/bubbles
+        if (mounted) setState(() {});
+      })
+      ..repeat();
   }
 
   @override
   void didUpdateWidget(TankWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.waterLevel != widget.waterLevel) {
-      _animation = Tween<double>(begin: oldWidget.waterLevel, end: widget.waterLevel).animate(_controller);
-      _controller.reset();
-      _controller.forward();
+      _levelAnimation = Tween<double>(begin: oldWidget.waterLevel, end: widget.waterLevel).animate(_levelController);
+      _levelController
+        ..reset()
+        ..forward();
     }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+  _levelController.dispose();
+  _waveController.dispose();
     super.dispose();
   }
 
@@ -64,11 +81,13 @@ class _TankWidgetState extends State<TankWidget> with SingleTickerProviderStateM
     return CustomPaint(
       painter: TankPainter(
         tankType: widget.tankType,
-        waterLevel: _animation.value,
+  waterLevel: _levelAnimation.value,
         minThreshold: widget.minThreshold,
         maxThreshold: widget.maxThreshold,
         percentage: widget.percentage,
         volume: widget.volume,
+  wavePhase: _waveController.value * 2 * math.pi,
+  waveAmplitude: 0.03, // ~3% of tank height
       ),
       child: const SizedBox.expand(),
     );
@@ -82,6 +101,8 @@ class TankPainter extends CustomPainter {
   final double? maxThreshold;
   final double percentage;
   final double volume;
+  final double wavePhase; // radians [0..2π)
+  final double waveAmplitude; // fraction of height (e.g., 0.03)
 
   TankPainter({
     required this.tankType,
@@ -90,41 +111,76 @@ class TankPainter extends CustomPainter {
     this.maxThreshold,
     required this.percentage,
     required this.volume,
+  required this.wavePhase,
+  required this.waveAmplitude,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
+    // Tank border with subtle metallic gradient
     final tankBorderPaint = Paint()
       ..shader = LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Colors.grey.shade700, Colors.grey.shade500, Colors.grey.shade700],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Colors.grey.shade300.withOpacity(0.85),
+          Colors.grey.shade600.withOpacity(0.9),
+          Colors.grey.shade400.withOpacity(0.85),
+        ],
+        stops: const [0.0, 0.5, 1.0],
       ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 15;
+      ..strokeWidth = 12
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 0.5);
 
+    // Water fill gradient (deeper at bottom)
     final waterPaint = Paint()
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [Colors.blue.shade300, Colors.blue.shade800],
+        colors: [
+          const Color(0xFF5EC8FF).withOpacity(0.9),
+          const Color(0xFF0A6FDB).withOpacity(0.95),
+        ],
       ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
 
     // Draw tank
     final tankPath = _getTankPath(size);
     canvas.drawPath(tankPath, tankBorderPaint);
 
-    // Draw water
-    final waterRect = Rect.fromLTRB(
-      0,
-      size.height * (1 - waterLevel),
-      size.width,
-      size.height,
-    );
+    // Draw water with a wavy surface
+    final levelY = size.height * (1 - waterLevel.clamp(0.0, 1.0));
+    final amp = (size.height * waveAmplitude).clamp(0.0, size.height * 0.08);
+    final cycles = 2.0; // number of waves across width
+
+    final waterPath = Path();
+    waterPath.moveTo(0, levelY);
+    final steps = math.max(12, (size.width / 6).floor());
+    for (int i = 0; i <= steps; i++) {
+      final x = size.width * (i / steps);
+      final y = levelY + amp * math.sin((x / size.width) * 2 * math.pi * cycles + wavePhase);
+      waterPath.lineTo(x, y);
+    }
+    waterPath.lineTo(size.width, size.height);
+    waterPath.lineTo(0, size.height);
+    waterPath.close();
 
     canvas.save();
     canvas.clipPath(tankPath);
-    canvas.drawRect(waterRect, waterPaint);
+  canvas.drawPath(waterPath, waterPaint);
+
+    // Subtle surface highlight
+    final highlight = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Colors.white.withOpacity(0.25), Colors.transparent],
+      ).createShader(Rect.fromLTWH(0, levelY - amp - 8, size.width, amp + 16));
+    canvas.drawRect(Rect.fromLTWH(0, levelY - amp - 8, size.width, amp + 16), highlight);
+
+    // Bubbles rising
+    _drawBubbles(canvas, size, tankPath);
+
     canvas.restore();
 
     // Draw threshold lines
@@ -176,13 +232,13 @@ class TankPainter extends CustomPainter {
         return Path()
           ..addRRect(RRect.fromRectAndRadius(
             Rect.fromLTWH(0, 0, size.width, size.height),
-            const Radius.circular(30),
+            const Radius.circular(32),
           ));
       case TankType.horizontalCylinder:
         return Path()
           ..addRRect(RRect.fromRectAndRadius(
-            Rect.fromLTWH(0, size.height * 0.25, size.width, size.height * 0.5),
-            Radius.circular(size.height * 0.25),
+            Rect.fromLTWH(0, size.height * 0.2, size.width, size.height * 0.6),
+            Radius.circular(size.height * 0.3),
           ));
       case TankType.rectangle:
         return Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
@@ -200,6 +256,27 @@ class TankPainter extends CustomPainter {
       ..moveTo(0, y)
       ..lineTo(size.width, y);
     canvas.drawPath(path, paint);
+  }
+
+  void _drawBubbles(Canvas canvas, Size size, Path clipPath) {
+    final bubblePaint = Paint()
+      ..color = Colors.white.withOpacity(0.25)
+      ..style = PaintingStyle.fill;
+
+    final n = 8;
+    // Use phase as a time source; spread bubbles horizontally
+    for (int i = 0; i < n; i++) {
+      final phase0 = (wavePhase / (2 * math.pi) + i * 0.13) % 1.0;
+      final x = size.width * (0.1 + 0.8 * (i / (n - 1)));
+      final y = size.height - (size.height * phase0);
+      final r = 1.5 + 2.5 * (1 - phase0);
+      final bubble = Path()..addOval(Rect.fromCircle(center: Offset(x, y), radius: r));
+      // Clip to tank to avoid drawing outside
+  canvas.save();
+  canvas.clipPath(clipPath);
+  canvas.drawPath(bubble, bubblePaint);
+  canvas.restore();
+    }
   }
 
   @override

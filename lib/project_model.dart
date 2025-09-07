@@ -37,6 +37,10 @@ class Project {
   bool payloadIsJson;
   int jsonFieldIndex; // 1-based order inside JSON object
   String? jsonKeyName; // optional key name to extract from JSON
+  // Optional: display timestamp from JSON payload
+  bool displayTimeFromJson;
+  int jsonTimeFieldIndex; // 1-based order for timestamp
+  String? jsonTimeKeyName; // optional key for timestamp
 
   Project({
     String? id,
@@ -69,6 +73,9 @@ class Project {
   this.payloadIsJson = false,
   this.jsonFieldIndex = 1,
   this.jsonKeyName,
+  this.displayTimeFromJson = false,
+  this.jsonTimeFieldIndex = 1,
+  this.jsonTimeKeyName,
   }) : id = id ?? const Uuid().v4();
 
   Map<String, dynamic> toJson() {
@@ -103,6 +110,9 @@ class Project {
   'payloadIsJson': payloadIsJson,
   'jsonFieldIndex': jsonFieldIndex,
   'jsonKeyName': jsonKeyName,
+  'displayTimeFromJson': displayTimeFromJson,
+  'jsonTimeFieldIndex': jsonTimeFieldIndex,
+  'jsonTimeKeyName': jsonTimeKeyName,
     };
   }
 
@@ -146,6 +156,11 @@ class Project {
       ? json['jsonFieldIndex']
       : int.tryParse('${json['jsonFieldIndex'] ?? '1'}') ?? 1,
   jsonKeyName: (json['jsonKeyName']?.toString().trim().isEmpty ?? true) ? null : json['jsonKeyName'].toString(),
+  displayTimeFromJson: json['displayTimeFromJson'] == true,
+  jsonTimeFieldIndex: (json['jsonTimeFieldIndex'] is int)
+      ? json['jsonTimeFieldIndex']
+      : int.tryParse('${json['jsonTimeFieldIndex'] ?? '1'}') ?? 1,
+  jsonTimeKeyName: (json['jsonTimeKeyName']?.toString().trim().isEmpty ?? true) ? null : json['jsonTimeKeyName'].toString(),
     );
   }
 
@@ -191,6 +206,9 @@ class Project {
   bool? payloadIsJson,
   int? jsonFieldIndex,
   String? jsonKeyName,
+    bool? displayTimeFromJson,
+    int? jsonTimeFieldIndex,
+    String? jsonTimeKeyName,
   }) {
     return Project(
       id: id ?? this.id,
@@ -223,6 +241,9 @@ class Project {
   payloadIsJson: payloadIsJson ?? this.payloadIsJson,
   jsonFieldIndex: jsonFieldIndex ?? this.jsonFieldIndex,
   jsonKeyName: jsonKeyName ?? this.jsonKeyName,
+      displayTimeFromJson: displayTimeFromJson ?? this.displayTimeFromJson,
+      jsonTimeFieldIndex: jsonTimeFieldIndex ?? this.jsonTimeFieldIndex,
+      jsonTimeKeyName: jsonTimeKeyName ?? this.jsonTimeKeyName,
     );
   }
 }

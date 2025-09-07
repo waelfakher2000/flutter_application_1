@@ -17,11 +17,16 @@ class MqttService {
   final bool payloadIsJson; // interpret main topic payload as JSON
   final int jsonFieldIndex; // 1-based field order to extract numeric value
   final String? jsonKeyName; // optional key name to extract value
+  // Optional timestamp extraction
+  final bool displayTimeFromJson;
+  final int jsonTimeFieldIndex; // 1-based field order for timestamp
+  final String? jsonTimeKeyName; // optional key for timestamp
   final String? username;
   final String? password;
   final void Function(double) onMessage;
   final void Function(String) onStatus;
   final void Function(String status)? onPresence;
+  final void Function(DateTime ts)? onTimestamp;
 
   late mqtt.MqttClient client;
   int _reconnectAttempts = 0;
@@ -38,11 +43,15 @@ class MqttService {
     this.payloadIsJson = false,
     this.jsonFieldIndex = 1,
   this.jsonKeyName,
+  this.displayTimeFromJson = false,
+  this.jsonTimeFieldIndex = 1,
+  this.jsonTimeKeyName,
     this.username,
     this.password,
     required this.onMessage,
     required this.onStatus,
-    this.onPresence,
+  this.onPresence,
+  this.onTimestamp,
   }) {
     final clientId = 'flutter_client_${DateTime.now().millisecondsSinceEpoch}';
 
@@ -188,6 +197,10 @@ class MqttService {
       if (payloadIsJson) {
         final val = _extractFromJson(payload, jsonFieldIndex, jsonKeyName);
         if (val != null) onMessage(val);
+        if (displayTimeFromJson && onTimestamp != null) {
+          final ts = _extractTimestampFromJson(payload, jsonTimeFieldIndex, jsonTimeKeyName);
+          if (ts != null) onTimestamp!(ts);
+        }
       } else {
         final value = double.tryParse(payload.trim());
         if (value != null) {
@@ -205,6 +218,55 @@ class MqttService {
     final match = regex.firstMatch(s);
     if (match != null) return double.tryParse(match.group(0)!);
     return null;
+  }
+
+  DateTime? _extractTimestampFromJson(String s, int order, String? keyName) {
+    try {
+      final decoded = jsonDecode(s);
+      dynamic v;
+      if (decoded is Map) {
+        if (keyName != null && keyName.trim().isNotEmpty) {
+          v = decoded[keyName];
+        } else {
+          final entries = decoded.entries.toList(growable: false);
+          if (order <= 0 || order > entries.length) return null;
+          v = entries[order - 1].value;
+        }
+      } else if (decoded is List) {
+        if (order <= 0 || order > decoded.length) return null;
+        v = decoded[order - 1];
+      } else {
+        return null;
+      }
+
+      if (v == null) return null;
+      if (v is num) {
+        final n = v.toDouble();
+        // epoch seconds or millis
+        if (n > 1000000000000) {
+          return DateTime.fromMillisecondsSinceEpoch(n.toInt(), isUtc: true).toLocal();
+        }
+        if (n > 1000000000) {
+          return DateTime.fromMillisecondsSinceEpoch((n * 1000).toInt(), isUtc: true).toLocal();
+        }
+        // too small to be epoch, ignore
+        return null;
+      }
+      if (v is String) {
+        final t = v.trim();
+        // Try numeric epoch string
+        final asNum = double.tryParse(t);
+        if (asNum != null) {
+          return _extractTimestampFromJson(jsonEncode(asNum), order, keyName);
+        }
+        // Try ISO8601
+        final dt = DateTime.tryParse(t);
+        return dt?.toLocal();
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 
   double? _extractFromJson(String s, int order, String? keyName) {

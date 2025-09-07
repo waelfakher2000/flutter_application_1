@@ -35,6 +35,10 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   bool _payloadIsJson = false;
   late TextEditingController _jsonFieldIndexController;
   late TextEditingController _jsonKeyNameController;
+  // Timestamp JSON options
+  bool _displayTimeFromJson = false;
+  late TextEditingController _jsonTimeFieldIndexController;
+  late TextEditingController _jsonTimeKeyNameController;
   // Control button
   bool _useControlButton = false;
   late TextEditingController _controlTopicController;
@@ -82,6 +86,9 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   _payloadIsJson = p?.payloadIsJson ?? false;
   _jsonFieldIndexController = TextEditingController(text: (p?.jsonFieldIndex ?? 1).toString());
   _jsonKeyNameController = TextEditingController(text: p?.jsonKeyName ?? '');
+  _displayTimeFromJson = p?.displayTimeFromJson ?? false;
+  _jsonTimeFieldIndexController = TextEditingController(text: (p?.jsonTimeFieldIndex ?? 1).toString());
+  _jsonTimeKeyNameController = TextEditingController(text: p?.jsonTimeKeyName ?? '');
   }
 
   @override
@@ -106,6 +113,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   _lastWillTopicController.dispose();
   _jsonFieldIndexController.dispose();
   _jsonKeyNameController.dispose();
+  _jsonTimeFieldIndexController.dispose();
+  _jsonTimeKeyNameController.dispose();
     super.dispose();
   }
 
@@ -113,6 +122,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
     if (_formKey.currentState!.validate()) {
       final project = Project(
         id: widget.project?.id,
+  groupId: widget.project?.groupId,
         name: _nameController.text,
         broker: _brokerController.text,
         port: int.parse(_portController.text),
@@ -133,6 +143,9 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   payloadIsJson: _payloadIsJson,
   jsonFieldIndex: int.tryParse(_jsonFieldIndexController.text.trim())?.clamp(1, 9999) ?? 1,
   jsonKeyName: _jsonKeyNameController.text.trim().isEmpty ? null : _jsonKeyNameController.text.trim(),
+  displayTimeFromJson: _displayTimeFromJson,
+  jsonTimeFieldIndex: int.tryParse(_jsonTimeFieldIndexController.text.trim())?.clamp(1, 9999) ?? 1,
+  jsonTimeKeyName: _jsonTimeKeyNameController.text.trim().isEmpty ? null : _jsonTimeKeyNameController.text.trim(),
   useControlButton: _useControlButton,
   controlTopic: _controlTopicController.text.trim().isEmpty ? null : _controlTopicController.text.trim(),
   controlMode: _controlMode,
@@ -294,6 +307,43 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                               controller: _jsonKeyNameController,
                               decoration: dec('JSON key name (optional)', Icons.key),
                             ),
+                            const Divider(height: 20),
+                            SwitchListTile.adaptive(
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('Display time from JSON'),
+                              subtitle: const Text('Show last update time parsed from the payload'),
+                              value: _displayTimeFromJson,
+                              onChanged: (v) => setState(() => _displayTimeFromJson = v),
+                            ),
+                            if (_displayTimeFromJson) ...[
+                              const SizedBox(height: 8),
+                              TextFormField(
+                                controller: _jsonTimeFieldIndexController,
+                                decoration: dec('Time field order (1 = first)', Icons.timer_outlined),
+                                keyboardType: TextInputType.number,
+                                validator: (value) {
+                                  if (!_payloadIsJson || !_displayTimeFromJson) return null;
+                                  final hasKey = _jsonTimeKeyNameController.text.trim().isNotEmpty;
+                                  // Allow empty when key provided
+                                  if (hasKey && (value == null || value.trim().isEmpty)) return null;
+                                  final n = int.tryParse(value ?? '');
+                                  if (n == null || n <= 0) return 'Enter a positive integer (or fill key name instead)';
+                                  return null;
+                                },
+                              ),
+                              const SizedBox(height: 8),
+                              TextFormField(
+                                controller: _jsonTimeKeyNameController,
+                                decoration: dec('Time key name (optional, enter one of order or key)', Icons.key_outlined),
+                                validator: (value) {
+                                  if (!_payloadIsJson || !_displayTimeFromJson) return null;
+                                  final hasOrder = int.tryParse(_jsonTimeFieldIndexController.text.trim()) != null;
+                                  final hasKey = (value ?? '').trim().isNotEmpty;
+                                  if (!hasOrder && !hasKey) return 'Enter either a time field order or a key name';
+                                  return null;
+                                },
+                              ),
+                            ],
                           ],
                           const SizedBox(height: 12),
                           TextFormField(

@@ -620,6 +620,9 @@ class _ProjectListPageState extends State<ProjectListPage> {
               payloadIsJson: project.payloadIsJson,
               jsonFieldIndex: project.jsonFieldIndex,
               jsonKeyName: project.jsonKeyName,
+              displayTimeFromJson: project.displayTimeFromJson,
+              jsonTimeFieldIndex: project.jsonTimeFieldIndex,
+              jsonTimeKeyName: project.jsonTimeKeyName,
             ),
           ),
         );
