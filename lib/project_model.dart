@@ -20,6 +20,7 @@ class Project {
   double? maxThreshold;
   double multiplier;
   double offset;
+  int connectedTankCount; // number of identical connected tanks sharing same level (>=1)
   // Control button settings
   bool useControlButton;
   String? controlTopic; // topic to publish to
@@ -41,6 +42,10 @@ class Project {
   bool displayTimeFromJson;
   int jsonTimeFieldIndex; // 1-based order for timestamp
   String? jsonTimeKeyName; // optional key for timestamp
+  // Cached latest measurement (for list & group aggregation)
+  double? lastLiquidLiters; // most recent filled volume in liters
+  double? lastTotalLiters; // capacity liters (may vary if dimensions edited)
+  DateTime? lastUpdated; // timestamp of lastLiquidLiters
 
   Project({
     String? id,
@@ -60,6 +65,7 @@ class Project {
     this.maxThreshold,
     this.multiplier = 1.0,
     this.offset = 0.0,
+    this.connectedTankCount = 1,
   this.useControlButton = false,
   this.controlTopic,
   this.controlMode = ControlMode.toggle,
@@ -76,6 +82,9 @@ class Project {
   this.displayTimeFromJson = false,
   this.jsonTimeFieldIndex = 1,
   this.jsonTimeKeyName,
+  this.lastLiquidLiters,
+  this.lastTotalLiters,
+  this.lastUpdated,
   }) : id = id ?? const Uuid().v4();
 
   Map<String, dynamic> toJson() {
@@ -97,6 +106,7 @@ class Project {
       'maxThreshold': maxThreshold,
       'multiplier': multiplier,
       'offset': offset,
+      'connectedTankCount': connectedTankCount,
   'useControlButton': useControlButton,
   'controlTopic': controlTopic,
   'controlMode': controlMode.toString(),
@@ -113,6 +123,9 @@ class Project {
   'displayTimeFromJson': displayTimeFromJson,
   'jsonTimeFieldIndex': jsonTimeFieldIndex,
   'jsonTimeKeyName': jsonTimeKeyName,
+  'lastLiquidLiters': lastLiquidLiters,
+  'lastTotalLiters': lastTotalLiters,
+  'lastUpdated': lastUpdated?.toIso8601String(),
     };
   }
 
@@ -135,6 +148,9 @@ class Project {
       maxThreshold: json['maxThreshold']?.toDouble(),
       multiplier: json['multiplier']?.toDouble() ?? 1.0,
       offset: json['offset']?.toDouble() ?? 0.0,
+    connectedTankCount: (json['connectedTankCount'] is int)
+      ? (json['connectedTankCount'] as int).clamp(1, 1000)
+      : int.tryParse('${json['connectedTankCount'] ?? '1'}')?.clamp(1, 1000) ?? 1,
       useControlButton: json['useControlButton'] == true,
       controlTopic: json['controlTopic'],
       controlMode: ControlMode.values.firstWhere(
@@ -161,6 +177,9 @@ class Project {
       ? json['jsonTimeFieldIndex']
       : int.tryParse('${json['jsonTimeFieldIndex'] ?? '1'}') ?? 1,
   jsonTimeKeyName: (json['jsonTimeKeyName']?.toString().trim().isEmpty ?? true) ? null : json['jsonTimeKeyName'].toString(),
+  lastLiquidLiters: (json['lastLiquidLiters'] is num) ? (json['lastLiquidLiters'] as num).toDouble() : null,
+  lastTotalLiters: (json['lastTotalLiters'] is num) ? (json['lastTotalLiters'] as num).toDouble() : null,
+  lastUpdated: json['lastUpdated'] != null ? DateTime.tryParse(json['lastUpdated']) : null,
     );
   }
 
@@ -193,6 +212,7 @@ class Project {
     double? maxThreshold,
     double? multiplier,
     double? offset,
+  int? connectedTankCount,
     bool? useControlButton,
     String? controlTopic,
     ControlMode? controlMode,
@@ -209,6 +229,9 @@ class Project {
     bool? displayTimeFromJson,
     int? jsonTimeFieldIndex,
     String? jsonTimeKeyName,
+  double? lastLiquidLiters,
+  double? lastTotalLiters,
+  DateTime? lastUpdated,
   }) {
     return Project(
       id: id ?? this.id,
@@ -228,6 +251,7 @@ class Project {
       maxThreshold: maxThreshold ?? this.maxThreshold,
       multiplier: multiplier ?? this.multiplier,
       offset: offset ?? this.offset,
+  connectedTankCount: connectedTankCount ?? this.connectedTankCount,
       useControlButton: useControlButton ?? this.useControlButton,
       controlTopic: controlTopic ?? this.controlTopic,
       controlMode: controlMode ?? this.controlMode,
@@ -244,6 +268,9 @@ class Project {
       displayTimeFromJson: displayTimeFromJson ?? this.displayTimeFromJson,
       jsonTimeFieldIndex: jsonTimeFieldIndex ?? this.jsonTimeFieldIndex,
       jsonTimeKeyName: jsonTimeKeyName ?? this.jsonTimeKeyName,
+  lastLiquidLiters: lastLiquidLiters ?? this.lastLiquidLiters,
+  lastTotalLiters: lastTotalLiters ?? this.lastTotalLiters,
+  lastUpdated: lastUpdated ?? this.lastUpdated,
     );
   }
 }

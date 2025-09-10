@@ -64,4 +64,31 @@ class ProjectShareCodec {
     final proj = Project.fromJson(env.body['project'] as Map<String, dynamic>);
     return proj;
   }
+
+  // Encode multiple projects (group). Credentials optional.
+  static String encodeProjects(List<Project> projects, {bool includeCredentials = false}) {
+    final list = projects.map((p) {
+      final m = Map<String, dynamic>.from(p.toJson());
+      if (!includeCredentials) {
+        m['username'] = null;
+        m['password'] = null;
+      }
+      return m;
+    }).toList();
+    final env = ShareEnvelope(type: 'tank_projects', version: 1, body: {
+      'projects': list,
+    });
+    final jsonStr = jsonEncode(env.toJson());
+    final zipped = _gzipEncode(utf8.encode(jsonStr));
+    return base64Url.encode(zipped);
+  }
+
+  static List<Project> decodeProjects(String data) {
+    final zipped = base64Url.decode(data);
+    final jsonStr = utf8.decode(_gzipDecode(zipped));
+    final env = ShareEnvelope.fromJson(jsonDecode(jsonStr));
+    if (env.type != 'tank_projects') throw FormatException('Unsupported type: ${env.type}');
+    final list = env.body['projects'] as List<dynamic>;
+    return list.map((e) => Project.fromJson(e as Map<String, dynamic>)).toList();
+  }
 }

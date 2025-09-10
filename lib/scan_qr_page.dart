@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:flutter_application_1/project_model.dart';
 import 'package:flutter_application_1/share_codec.dart';
+import 'package:image_picker/image_picker.dart';
 
 class ScanQrPage extends StatefulWidget {
   const ScanQrPage({super.key});
@@ -28,14 +29,38 @@ class _ScanQrPageState extends State<ScanQrPage> {
     if (raw == null || raw.isEmpty) return;
 
     try {
+      // Try multi first
+      try {
+        final list = ProjectShareCodec.decodeProjects(raw);
+        if (list.isNotEmpty) {
+          if (!mounted) return;
+          setState(() {
+            _handled = true;
+          });
+          await _showMultiImportDialog(list);
+          return;
+        }
+      } catch (_) {}
+
       final project = ProjectShareCodec.decodeProject(raw);
       if (!mounted) return;
-      setState(() => _handled = true);
-
+      setState(() {
+        _handled = true;
+      });
       await _showPreviewAndReturn(project);
     } catch (e) {
       // Not our format, ignore and continue scanning
     }
+  }
+
+  Future<void> _pickFromGallery() async {
+    final picker = ImagePicker();
+    final XFile? file = await picker.pickImage(source: ImageSource.gallery);
+    if (file == null) return;
+  // For now, gallery decode requires additional plugin setup. Placeholder: show snackbar.
+  if (!mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Gallery QR decode pending dependency setup.')));
+  return;
   }
 
   Future<void> _showPreviewAndReturn(Project project) async {
@@ -81,10 +106,57 @@ class _ScanQrPageState extends State<ScanQrPage> {
     Navigator.of(context).pop(project);
   }
 
+  Future<void> _showMultiImportDialog(List<Project> projects) async {
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Import ${projects.length} Projects'),
+        content: SizedBox(
+          width: 300,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: projects.length,
+            itemBuilder: (c, i) => ListTile(
+              dense: true,
+              title: Text(projects[i].name),
+              subtitle: Text(projects[i].broker),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              setState(() => _handled = false);
+            },
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Import All'),
+          ),
+        ],
+      ),
+    ).then((ok) {
+      if (ok == true) {
+        Navigator.of(context).pop(projects);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Scan QR to Import')),
+      appBar: AppBar(
+        title: const Text('Scan QR to Import'),
+        actions: [
+          IconButton(
+            tooltip: 'From Gallery',
+            icon: const Icon(Icons.image),
+            onPressed: _pickFromGallery,
+          )
+        ],
+      ),
       body: MobileScanner(
         controller: _controller,
         onDetect: _onDetect,

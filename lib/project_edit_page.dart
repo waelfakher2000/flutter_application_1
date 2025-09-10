@@ -29,6 +29,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   late TextEditingController _maxController;
   late TextEditingController _multiplierController;
   late TextEditingController _offsetController;
+  late TextEditingController _connectedTanksController;
   // Last Will / Presence
   late TextEditingController _lastWillTopicController;
   // Payload JSON options
@@ -72,6 +73,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
     _maxController = TextEditingController(text: p?.maxThreshold?.toString());
     _multiplierController = TextEditingController(text: p?.multiplier.toString() ?? '1.0');
     _offsetController = TextEditingController(text: p?.offset.toString() ?? '0.0');
+  _connectedTanksController = TextEditingController(text: (p?.connectedTankCount ?? 1).toString());
   _lastWillTopicController = TextEditingController(text: p?.lastWillTopic ?? '');
   // Control button
   _useControlButton = p?.useControlButton ?? false;
@@ -107,6 +109,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
     _maxController.dispose();
     _multiplierController.dispose();
     _offsetController.dispose();
+    _connectedTanksController.dispose();
   _controlTopicController.dispose();
   _onValueController.dispose();
   _offValueController.dispose();
@@ -139,6 +142,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
         maxThreshold: _maxController.text.isNotEmpty ? double.parse(_maxController.text) : null,
         multiplier: double.tryParse(_multiplierController.text) ?? 1.0,
         offset: double.tryParse(_offsetController.text) ?? 0.0,
+  connectedTankCount: int.tryParse(_connectedTanksController.text.trim())?.clamp(1, 1000) ?? 1,
   lastWillTopic: _lastWillTopicController.text.trim().isEmpty ? null : _lastWillTopicController.text.trim(),
   payloadIsJson: _payloadIsJson,
   jsonFieldIndex: int.tryParse(_jsonFieldIndexController.text.trim())?.clamp(1, 9999) ?? 1,
@@ -385,6 +389,19 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                             controller: _offsetController,
                             decoration: dec('Offset', Icons.exposure),
                             keyboardType: TextInputType.number,
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: _connectedTanksController,
+                            decoration: dec('Connected tanks count', Icons.storage, hint: '1 = single tank'),
+                            keyboardType: TextInputType.number,
+                            validator: (v) {
+                              if (v == null || v.trim().isEmpty) return 'Enter a number';
+                              final n = int.tryParse(v.trim());
+                              if (n == null || n < 1) return 'Must be >= 1';
+                              if (n > 1000) return 'Too large';
+                              return null;
+                            },
                           ),
                         ],
                       ),

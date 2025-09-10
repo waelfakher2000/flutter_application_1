@@ -10,6 +10,11 @@ import 'share_qr_page.dart';
 import 'scan_qr_page.dart';
 import 'project_group.dart';
 import 'theme_provider.dart';
+import 'types.dart';
+import 'project_repository.dart';
+import 'mqtt_service.dart';
+import 'dart:math' as math;
+import 'dart:async';
 
 class ProjectListPage extends StatefulWidget {
   const ProjectListPage({super.key});
@@ -19,17 +24,30 @@ class ProjectListPage extends StatefulWidget {
 }
 
 class _ProjectListPageState extends State<ProjectListPage> {
-  List<Project> _projects = [];
-  List<ProjectGroup> _groups = [];
   Object? _dragHoverGroupKey; // group.id or 'ungrouped'
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  bool _didAutoRefresh = false;
 
   @override
   void initState() {
     super.initState();
-    _loadProjects();
     _applyOrAskForFullScreen();
+  WidgetsBinding.instance.addPostFrameCallback((_) => _autoRefreshOnce());
+  }
+
+  double _projectCapacityLiters(Project p) {
+    switch (p.tankType) {
+      case TankType.verticalCylinder:
+        final r = p.diameter / 2.0;
+        return 1000 * (3.141592653589793 * r * r * p.height) * p.connectedTankCount;
+      case TankType.horizontalCylinder:
+        final r = p.diameter / 2.0;
+        final full = 3.141592653589793 * r * r * p.length; // m^3
+        return 1000 * full * p.connectedTankCount;
+      case TankType.rectangle:
+        return 1000 * (p.length * p.width * p.height) * p.connectedTankCount;
+    }
   }
 
   Future<void> _applyOrAskForFullScreen() async {
@@ -99,41 +117,128 @@ class _ProjectListPageState extends State<ProjectListPage> {
     super.dispose();
   }
 
-  Future<void> _loadProjects() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String? projectsString = prefs.getString('projects');
-    if (projectsString != null) {
-      setState(() {
-        _projects = Project.decode(projectsString);
-      });
-    }
-    final groupsString = prefs.getString('project_groups');
-    if (groupsString != null) {
-      setState(() {
-        _groups = ProjectGroup.decode(groupsString);
-      });
-    }
+  // Legacy persistence removed; repository handles saving.
+  Future<void> _autoRefreshOnce() async {
+    if (_didAutoRefresh) return;
+    final repo = context.read<ProjectRepository>();
+    if (!repo.isLoaded) return; // wait for load
+    _didAutoRefresh = true;
+    await _refreshLiveVolumes();
   }
 
-  Future<void> _saveProjects() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('projects', Project.encode(_projects));
-  await prefs.setString('project_groups', ProjectGroup.encode(_groups));
+  Future<void> _refreshLiveVolumes() async {
+    final repo = context.read<ProjectRepository>();
+    // Ensure we have the latest persisted snapshot first
+    await repo.reload();
+    final projects = repo.projects.toList();
+    // For each project, open a short-lived MQTT subscription to grab one (retained) message.
+    // If the broker/topic doesn't retain or publish quickly, we timeout.
+    Future<void> fetch(Project p) async {
+      final completer = Completer<void>();
+      Timer? timer;
+      late MqttService svc;
+      void finish() {
+        if (!completer.isCompleted) completer.complete();
+      }
+      double _totalVolumeM3(Project pr) {
+        switch (pr.tankType) {
+          case TankType.verticalCylinder:
+            final r = pr.diameter / 2.0; return math.pi * r * r * pr.height * pr.connectedTankCount;
+          case TankType.horizontalCylinder:
+            final r = pr.diameter / 2.0; return math.pi * r * r * pr.length * pr.connectedTankCount;
+          case TankType.rectangle:
+            return pr.length * pr.width * pr.height * pr.connectedTankCount;
+        }
+      }
+      double _horizontalSegmentArea(double r, double h) {
+        // h: filled height (0..2r)
+        if (h <= 0) return 0; if (h >= 2*r) return math.pi * r * r;
+        final part1 = r*r*math.acos((r - h)/r);
+        final part2 = (r - h)*math.sqrt(2*r*h - h*h);
+        return part1 - part2;
+      }
+      double _liquidVolumeM3(Project pr, double level) {
+        switch (pr.tankType) {
+          case TankType.verticalCylinder:
+            final r = pr.diameter / 2.0; return math.pi * r * r * level * pr.connectedTankCount;
+          case TankType.horizontalCylinder:
+            final r = pr.diameter / 2.0; final area = _horizontalSegmentArea(r, level.clamp(0, 2*r)); return area * pr.length * pr.connectedTankCount;
+          case TankType.rectangle:
+            return pr.length * pr.width * level * pr.connectedTankCount;
+        }
+      }
+      svc = MqttService(
+        p.broker,
+        p.port,
+        p.topic,
+        publishTopic: null,
+        lastWillTopic: p.lastWillTopic,
+        payloadIsJson: p.payloadIsJson,
+        jsonFieldIndex: p.jsonFieldIndex,
+        jsonKeyName: p.jsonKeyName,
+        displayTimeFromJson: p.displayTimeFromJson,
+        jsonTimeFieldIndex: p.jsonTimeFieldIndex,
+        jsonTimeKeyName: p.jsonTimeKeyName,
+        username: p.username,
+        password: p.password,
+        onMessage: (raw) {
+          final corrected = raw * p.multiplier + p.offset;
+          double level;
+          if (p.sensorType == SensorType.submersible) {
+            level = corrected;
+          } else {
+            level = p.height - corrected; // ultrasonic distance → level
+          }
+            // Clamp level for safety
+          if (p.tankType == TankType.horizontalCylinder) {
+            // vertical dimension is diameter
+            level = level.clamp(0.0, p.diameter);
+          } else {
+            level = level.clamp(0.0, p.height);
+          }
+          final totalM3 = _totalVolumeM3(p);
+          final liquidM3 = _liquidVolumeM3(p, level);
+          repo.updateVolume(p.id, liquidM3 * 1000, totalM3 * 1000, DateTime.now());
+          try { svc.disconnect(); } catch (_) {}
+          timer?.cancel();
+          finish();
+        },
+        onStatus: (_) {},
+        onPresence: (_) {},
+        onTimestamp: (_) {},
+      );
+      try {
+        svc.connect();
+      } catch (_) {
+        finish();
+      }
+      timer = Timer(const Duration(seconds: 3), () { try { svc.disconnect(); } catch (_) {} finish(); });
+      await completer.future;
+    }
+    // Limit concurrency to avoid too many simultaneous connections
+    const int maxConcurrent = 3;
+    int index = 0;
+    while (index < projects.length) {
+      final batch = <Future>[];
+      for (int i = 0; i < maxConcurrent && index < projects.length; i++, index++) {
+        batch.add(fetch(projects[index]));
+      }
+      await Future.wait(batch);
+      if (!mounted) break;
+    }
   }
 
   Future<void> _scanImport() async {
     final imported = await Navigator.of(context).push<Project>(
       MaterialPageRoute(builder: (context) => const ScanQrPage()),
     );
-    if (imported != null) {
-      await _handleImport(imported);
-    }
+  if (imported != null) await _handleImport(imported);
   }
 
   Future<void> _handleImport(Project imported) async {
-  // When importing, don't assume sender's groups exist locally
-  imported.groupId = null;
-    final existingIndex = _projects.indexWhere((p) => p.name == imported.name);
+    final repo = context.read<ProjectRepository>();
+    imported.groupId = null; // do not auto-map group IDs from external source
+    final existingIndex = repo.projects.indexWhere((p) => p.name == imported.name);
     if (existingIndex >= 0) {
       final action = await showDialog<String>(
         context: context,
@@ -141,45 +246,28 @@ class _ProjectListPageState extends State<ProjectListPage> {
           title: const Text('Project Exists'),
           content: Text('A project named "${imported.name}" already exists. What would you like to do?'),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop('cancel'),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop('keepBoth'),
-              child: const Text('Keep Both'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop('replace'),
-              child: const Text('Replace'),
-            ),
+            TextButton(onPressed: () => Navigator.of(context).pop('cancel'), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.of(context).pop('keepBoth'), child: const Text('Keep Both')),
+            FilledButton(onPressed: () => Navigator.of(context).pop('replace'), child: const Text('Replace')),
           ],
         ),
       );
       if (!mounted || action == null || action == 'cancel') return;
       if (action == 'replace') {
-        setState(() {
-          _projects[existingIndex] = imported;
-        });
+        repo.updateProject(imported.copyWith(id: repo.projects[existingIndex].id));
       } else {
-        // keep both
-        final unique = _uniqueName(imported.name);
-        setState(() {
-          _projects.add(imported.copyWith(name: unique));
-        });
+        final unique = _uniqueName(imported.name, repo.projects);
+        repo.addProject(imported.copyWith(name: unique));
       }
     } else {
-      setState(() {
-        _projects.add(imported);
-      });
+      repo.addProject(imported);
     }
-    await _saveProjects();
   }
 
-  String _uniqueName(String base) {
+  String _uniqueName(String base, List<Project> current) {
     var name = base;
     var i = 1;
-    while (_projects.any((p) => p.name == name)) {
+    while (current.any((p) => p.name == name)) {
       i++;
       name = '$base ($i)';
     }
@@ -187,8 +275,9 @@ class _ProjectListPageState extends State<ProjectListPage> {
   }
 
   Future<void> _copyProject(int index) async {
-    final original = _projects[index];
-    final defaultName = _uniqueName('${original.name} (copy)');
+    final repo = context.read<ProjectRepository>();
+    final original = repo.projects[index];
+    final defaultName = _uniqueName('${original.name} (copy)', repo.projects);
     final controller = TextEditingController(text: defaultName);
 
     final newName = await showDialog<String>(
@@ -218,26 +307,20 @@ class _ProjectListPageState extends State<ProjectListPage> {
     if (newName == null || newName.isEmpty) return;
 
     // Duplicate by JSON round-trip, clearing id so constructor generates a new one
-    final json = original.toJson();
-    json['id'] = null;
-    json['name'] = _uniqueName(newName);
+    final json = original.toJson()
+      ..['id'] = null
+      ..['name'] = _uniqueName(newName, repo.projects);
     final cloned = Project.fromJson(json);
-
-    setState(() {
-      _projects.add(cloned);
-    });
-    await _saveProjects();
+    repo.addProject(cloned);
   }
 
   void _addProject() async {
+    final repo = context.read<ProjectRepository>();
     final newProject = await Navigator.of(context).push<Project>(
       MaterialPageRoute(builder: (context) => const ProjectEditPage()),
     );
     if (newProject != null) {
-      setState(() {
-        _projects.add(newProject);
-      });
-      await _saveProjects();
+      repo.addProject(newProject);
     }
   }
 
@@ -259,10 +342,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
       ),
     );
     if (name == null || name.isEmpty) return;
-    setState(() {
-      _groups.add(ProjectGroup(name: name));
-    });
-    await _saveProjects();
+  context.read<ProjectRepository>().addGroup(ProjectGroup(name: name));
   }
 
   Future<void> _renameGroup(ProjectGroup group) async {
@@ -283,10 +363,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
       ),
     );
     if (name == null || name.isEmpty) return;
-    setState(() {
-      group.name = name;
-    });
-    await _saveProjects();
+  context.read<ProjectRepository>().renameGroup(group.id, name);
   }
 
   Future<void> _deleteGroup(ProjectGroup group) async {
@@ -302,30 +379,21 @@ class _ProjectListPageState extends State<ProjectListPage> {
       ),
     );
     if (confirm != true) return;
-    setState(() {
-      _projects = _projects.map((p) => p.groupId == group.id ? p.copyWith(groupId: null) : p).toList();
-      _groups.removeWhere((g) => g.id == group.id);
-    });
-    await _saveProjects();
+  context.read<ProjectRepository>().deleteGroup(group.id);
   }
 
   // Drag & drop handles moving projects between groups; no separate picker needed.
 
   void _editProject(int index) async {
+    final repo = context.read<ProjectRepository>();
     final updatedProject = await Navigator.of(context).push<Project>(
-      MaterialPageRoute(
-        builder: (context) => ProjectEditPage(project: _projects[index]),
-      ),
+      MaterialPageRoute(builder: (context) => ProjectEditPage(project: repo.projects[index])),
     );
-    if (updatedProject != null) {
-      setState(() {
-        _projects[index] = updatedProject;
-      });
-      await _saveProjects();
-    }
+    if (updatedProject != null) repo.updateProject(updatedProject);
   }
 
   void _deleteProject(int index) {
+    final repo = context.read<ProjectRepository>();
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -338,10 +406,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
           ),
           TextButton(
             onPressed: () async {
-              setState(() {
-                _projects.removeAt(index);
-              });
-              await _saveProjects();
+              repo.deleteProject(repo.projects[index].id);
               Navigator.of(context).pop();
             },
             child: const Text('Delete'),
@@ -392,15 +457,18 @@ class _ProjectListPageState extends State<ProjectListPage> {
   }
 
   Widget _buildGroupedBody() {
-    // Build filtered list based on search query
+    final repo = context.watch<ProjectRepository>();
+    if (!repo.isLoaded) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final allProjects = repo.projects;
+    final groups = repo.groups;
     final String q = _searchQuery.trim().toLowerCase();
     final List<Project> filtered = q.isEmpty
-        ? _projects
-        : _projects
-            .where((p) => p.name.toLowerCase().contains(q) || (p.broker).toLowerCase().contains(q))
-            .toList();
+        ? allProjects
+        : allProjects.where((p) => p.name.toLowerCase().contains(q) || p.broker.toLowerCase().contains(q)).toList();
 
-    if (_projects.isEmpty) {
+    if (allProjects.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -448,8 +516,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
     }
 
     // Build grouped map: groupId -> List<Project>
-    final Map<String?, List<Project>> grouped = {};
-    final existingGroupIds = _groups.map((g) => g.id).toSet();
+  final Map<String?, List<Project>> grouped = {};
+  final existingGroupIds = groups.map((g) => g.id).toSet();
     for (final p in filtered) {
       final gid = (p.groupId != null && existingGroupIds.contains(p.groupId)) ? p.groupId : null;
       grouped.putIfAbsent(gid, () => []).add(p);
@@ -458,35 +526,40 @@ class _ProjectListPageState extends State<ProjectListPage> {
     // Order: groups, then ungrouped at the end
     final List<Widget> sections = [];
 
-    for (final g in _groups) {
+  for (final g in groups) {
       final items = grouped[g.id] ?? [];
       sections.add(_groupSection(title: g.name, group: g, projects: items));
     }
 
     final ungrouped = grouped[null] ?? [];
-    if (ungrouped.isNotEmpty || _groups.isEmpty) {
+  if (ungrouped.isNotEmpty || groups.isEmpty) {
       sections.add(_groupSection(title: 'Ungrouped', group: null, projects: ungrouped));
     }
 
-    return ListView(
-      children: [
-        _searchBar(),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-          child: Row(
-            children: [
-              const Text('Groups', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: _addGroup,
-                icon: const Icon(Icons.add),
-                label: const Text('Add Group'),
-              ),
-            ],
+    return RefreshIndicator(
+  onRefresh: _refreshLiveVolumes,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          _searchBar(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Row(
+              children: [
+                const Text('Groups', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _addGroup,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add Group'),
+                ),
+              ],
+            ),
           ),
-        ),
-        ...sections,
-      ],
+          ...sections,
+          const SizedBox(height: 24),
+        ],
+      ),
     );
   }
 
@@ -519,6 +592,18 @@ class _ProjectListPageState extends State<ProjectListPage> {
   Widget _groupSection({required String title, ProjectGroup? group, required List<Project> projects}) {
     final key = group?.id ?? 'ungrouped';
     final hovered = _dragHoverGroupKey == key;
+    // Aggregation (compute capacity from dimensions each time to ensure visibility even before readings arrive)
+    double totalCapacity = 0; // liters
+    double totalLiquid = 0;   // liters (only if cached)
+    for (final p in projects) {
+      final capacity = _projectCapacityLiters(p);
+      totalCapacity += capacity;
+      if (p.lastLiquidLiters != null) {
+        totalLiquid += p.lastLiquidLiters!;
+      }
+    }
+    // If we have no liquid readings yet, keep totalLiquid as 0 (percent 0)
+    final pct = totalCapacity > 0 ? (totalLiquid / totalCapacity * 100).clamp(0, 100) : null;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: DragTarget<Project>(
@@ -531,11 +616,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
         },
         onAcceptWithDetails: (details) async {
           final project = details.data;
-          setState(() {
-            project.groupId = group?.id; // null for ungrouped
-            _dragHoverGroupKey = null;
-          });
-          await _saveProjects();
+          context.read<ProjectRepository>().setProjectGroup(project.id, group?.id);
+          setState(() => _dragHoverGroupKey = null);
         },
         builder: (context, candidate, rejected) {
           return Container(
@@ -549,6 +631,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
               title: Text(
                 title,
                 style: const TextStyle(fontWeight: FontWeight.bold, fontStyle: FontStyle.italic),
+                overflow: TextOverflow.ellipsis,
               ),
               subtitle: Text(
                 '${projects.length} project${projects.length == 1 ? '' : 's'}',
@@ -557,20 +640,79 @@ class _ProjectListPageState extends State<ProjectListPage> {
               initiallyExpanded: true,
               trailing: group == null
                   ? null
-                  : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.edit),
-                          tooltip: 'Rename group',
-                          onPressed: () => _renameGroup(group),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.delete),
-                          tooltip: 'Delete group',
-                          onPressed: () => _deleteGroup(group),
-                        ),
-                      ],
+                  : SizedBox(
+                      width: 205,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          if (totalCapacity > 0)
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    '${totalLiquid.toStringAsFixed(1)}/${totalCapacity.toStringAsFixed(1)}L',
+                                    style: Theme.of(context).textTheme.labelSmall?.copyWith(height: 0.9),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (pct != null)
+                                  Container(
+                                    margin: const EdgeInsets.only(left: 4),
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context).colorScheme.primaryContainer,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Text(
+                                      '${pct.toStringAsFixed(0)}%',
+                                      style: Theme.of(context).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w600, height: 0.9),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          const SizedBox(height: 1),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.all(1),
+                                constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+                                icon: const Icon(Icons.qr_code_2),
+                                tooltip: 'Share group projects',
+                                onPressed: projects.isEmpty
+                                    ? null
+                                    : () {
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute(
+                                            builder: (_) => ShareQrPage(projects: projects),
+                                          ),
+                                        );
+                                      },
+                              ),
+                              IconButton(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.all(1),
+                                constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+                                icon: const Icon(Icons.edit, size: 18),
+                                tooltip: 'Rename group',
+                                onPressed: () => _renameGroup(group),
+                              ),
+                              IconButton(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.all(1),
+                                constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+                                icon: const Icon(Icons.delete, size: 18),
+                                tooltip: 'Delete group',
+                                onPressed: () => _deleteGroup(group),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
               children: projects.isEmpty
                   ? const [ListTile(title: Text('No projects'))]
@@ -583,7 +725,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
   }
 
   Widget _projectTile(Project project) {
-    final index = _projects.indexWhere((p) => p.id == project.id);
+    final repo = context.read<ProjectRepository>();
+    final index = repo.projects.indexWhere((p) => p.id == project.id);
     final tile = ListTile(
       title: Text(project.name),
       subtitle: Text(project.broker),
@@ -605,8 +748,10 @@ class _ProjectListPageState extends State<ProjectListPage> {
               minThreshold: project.minThreshold,
               maxThreshold: project.maxThreshold,
               projectName: project.name,
+              projectId: project.id,
               multiplier: project.multiplier,
               offset: project.offset,
+              connectedTankCount: project.connectedTankCount,
               useControlButton: project.useControlButton,
               controlTopic: project.controlTopic,
               controlMode: project.controlMode,
@@ -630,11 +775,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          IconButton(
-            icon: const Icon(Icons.copy),
-            tooltip: 'Copy project',
-            onPressed: () => _copyProject(index),
-          ),
+          IconButton(icon: const Icon(Icons.copy), tooltip: 'Copy project', onPressed: () => _copyProject(index)),
           IconButton(
             icon: const Icon(Icons.qr_code),
             tooltip: 'Share via QR',
@@ -644,14 +785,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
               );
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.edit),
-            onPressed: () => _editProject(index),
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete),
-            onPressed: () => _deleteProject(index),
-          ),
+          IconButton(icon: const Icon(Icons.edit), onPressed: () => _editProject(index)),
+          IconButton(icon: const Icon(Icons.delete), onPressed: () => _deleteProject(index)),
         ],
       ),
     );

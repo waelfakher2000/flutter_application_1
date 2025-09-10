@@ -8,10 +8,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'tank_widget.dart';
 import 'theme_provider.dart';
+import 'project_repository.dart';
 import 'types.dart';
 import 'mqtt_service.dart';
 import 'landing_page.dart';
 import 'project_list_page.dart';
+import 'project_model.dart';
 import 'package:mqtt_client/mqtt_client.dart' as mqtt;
 
 // Local notifications plugin instance
@@ -62,12 +64,10 @@ const bool enableNativeForegroundService = false;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeLocalNotifications();
-  runApp(
-    ChangeNotifierProvider(
-      create: (_) => ThemeProvider(),
-      child: const TankApp(),
-    ),
-  );
+  runApp(MultiProvider(providers: [
+    ChangeNotifierProvider(create: (_) => ThemeProvider()),
+    ChangeNotifierProvider(create: (_) => ProjectRepository()..load()),
+  ], child: const TankApp()));
 }
 
 class TankApp extends StatelessWidget {
@@ -436,6 +436,7 @@ class _SensorTankSetupPageState extends State<SensorTankSetupPage> {
           minThreshold: minThr,
           maxThreshold: maxThr,
           projectName: widget.topic, // fallback to topic as name if not available
+          connectedTankCount: 1,
         ),
       ),
     );
@@ -590,6 +591,7 @@ class MainTankPage extends StatefulWidget {
   final double? maxThreshold;
   final double multiplier;
   final double offset;
+  final int connectedTankCount;
   // Control button config
   final bool useControlButton;
   final String? controlTopic;
@@ -602,6 +604,7 @@ class MainTankPage extends StatefulWidget {
   final String? lastWillTopic;
 
   final String projectName;
+  final String? projectId; // optional: used for repository volume updates
   // Payload parsing options
   final bool payloadIsJson;
   final int jsonFieldIndex;
@@ -626,8 +629,10 @@ class MainTankPage extends StatefulWidget {
     this.minThreshold,
     this.maxThreshold,
     required this.projectName,
+  this.projectId,
     this.multiplier = 1.0,
     this.offset = 0.0,
+    this.connectedTankCount = 1,
   this.useControlButton = false,
   this.controlTopic,
   this.controlMode = ControlMode.toggle,
@@ -662,11 +667,16 @@ class _MainTankPageState extends State<MainTankPage> {
   String? _presenceStatus; // presence from last will topic, if configured
   bool _isOn = false; // current state for on/off or last state for toggle
   DateTime? _lastTimestamp; // last parsed timestamp
+  DateTime? _lastMessageAt; // last MQTT data time for stale detection
+  Timer? _staleTimer;
+  late final _LifecycleHook _lifecycleHook;
   // presence handled via _connectionStatus cloud icon
 
   @override
   void initState() {
     super.initState();
+  _lifecycleHook = _LifecycleHook(onChange: _handleLifecycle);
+  WidgetsBinding.instance.addObserver(_lifecycleHook);
     _mqttService = MqttService(
       widget.broker,
       widget.port,
@@ -692,6 +702,32 @@ class _MainTankPageState extends State<MainTankPage> {
       _startNativeService();
     }
     debugPrint('Skipping bridge registration in MainTankPage.initState (local notifications only)');
+    _startStaleMonitor();
+  }
+
+  void _handleLifecycle(AppLifecycleState state) {
+    if (!mounted) return;
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _mqttService.disconnect();
+      setState(() { _connectionStatus = 'Paused'; });
+    } else if (state == AppLifecycleState.resumed) {
+      // Force a reconnect sequence
+      _mqttService.connect();
+      setState(() { if (!_connectionStatus.toLowerCase().contains('connecting')) _connectionStatus = 'Reconnecting'; });
+    }
+  }
+
+  void _startStaleMonitor() {
+    _staleTimer?.cancel();
+    _staleTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted) return;
+      if (_connectionStatus.toLowerCase().contains('connected') && _lastMessageAt != null) {
+        final age = DateTime.now().difference(_lastMessageAt!);
+        if (age.inSeconds > 20) {
+          setState(() { _connectionStatus = 'Stale'; });
+        }
+      }
+    });
   }
 
   void _onTimestamp(DateTime ts) {
@@ -751,8 +787,10 @@ class _MainTankPageState extends State<MainTankPage> {
 
   @override
   void dispose() {
-    _mqttService.disconnect();
+  WidgetsBinding.instance.removeObserver(_lifecycleHook);
+  _mqttService.disconnect();
     _heartbeatTimer?.cancel();
+  _staleTimer?.cancel();
     super.dispose();
   }
 
@@ -806,7 +844,21 @@ class _MainTankPageState extends State<MainTankPage> {
       // clamp to [0, tank height]
       if (_level.isNaN) _level = 0.0;
       _level = _level.clamp(0.0, widget.height);
+      _lastMessageAt = DateTime.now();
     });
+
+    // Update repository cached volumes if projectId provided
+    if (widget.projectId != null) {
+      try {
+        final repo = context.read<ProjectRepository>();
+        final totalM3 = _totalVolumeM3();
+        final liquidM3 = _liquidVolumeM3();
+  repo.updateVolume(widget.projectId!, liquidM3 * 1000, totalM3 * 1000, DateTime.now());
+      } catch (_) {}
+    } else {
+      // Fallback to legacy persistence for older routes without id
+      _persistLatestVolumes();
+    }
 
     // check thresholds outside setState to avoid UI jitter
     final minThr = widget.minThreshold;
@@ -863,6 +915,26 @@ class _MainTankPageState extends State<MainTankPage> {
     }
   }
 
+  Future<void> _persistLatestVolumes() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final projectsStr = prefs.getString('projects');
+      if (projectsStr == null) return;
+      final list = Project.decode(projectsStr);
+      final idx = list.indexWhere((p) => p.name == widget.projectName);
+      if (idx < 0) return; // match by name (ids not passed into MainTankPage)
+      final totalM3 = _totalVolumeM3();
+      final liquidM3 = _liquidVolumeM3();
+      final updated = list[idx].copyWith(
+        lastTotalLiters: totalM3 * 1000,
+        lastLiquidLiters: liquidM3 * 1000,
+        lastUpdated: DateTime.now(),
+      );
+      list[idx] = updated;
+      await prefs.setString('projects', Project.encode(list));
+    } catch (_) {}
+  }
+
   void _maybeNotify(String title, String body) async {
     try {
       final enabled = await _settingsChannel.invokeMethod<bool>('areNotificationsEnabled');
@@ -888,12 +960,12 @@ class _MainTankPageState extends State<MainTankPage> {
     switch (widget.tankType) {
       case TankType.verticalCylinder:
         final r = widget.diameter / 2.0;
-        return pi * r * r * widget.height;
+  return pi * r * r * widget.height * widget.connectedTankCount;
       case TankType.horizontalCylinder:
         final r = widget.diameter / 2.0;
-        return _horizontalCylinderVolume(r, widget.length); // full volume
+  return _horizontalCylinderVolume(r, widget.length) * widget.connectedTankCount; // full volume
       case TankType.rectangle:
-        return widget.length * widget.width * widget.height;
+  return widget.length * widget.width * widget.height * widget.connectedTankCount;
     }
   }
 
@@ -901,13 +973,13 @@ class _MainTankPageState extends State<MainTankPage> {
     switch (widget.tankType) {
       case TankType.verticalCylinder:
         final r = widget.diameter / 2.0;
-        return pi * r * r * (_level);
+  return pi * r * r * (_level) * widget.connectedTankCount;
       case TankType.horizontalCylinder:
         final r = widget.diameter / 2.0;
         final A = _horizontalCylinderSectionArea(r, _level);
-        return A * widget.length;
+  return A * widget.length * widget.connectedTankCount;
       case TankType.rectangle:
-        return widget.length * widget.width * (_level);
+  return widget.length * widget.width * (_level) * widget.connectedTankCount;
     }
   }
 
@@ -1160,6 +1232,15 @@ class _MainTankPageState extends State<MainTankPage> {
         ),
       ),
     );
+  }
+}
+
+class _LifecycleHook with WidgetsBindingObserver {
+  final void Function(AppLifecycleState state) onChange;
+  _LifecycleHook({required this.onChange});
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    onChange(state);
   }
 }
 
