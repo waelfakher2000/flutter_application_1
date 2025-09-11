@@ -95,13 +95,19 @@ class _ShareQrPageState extends State<ShareQrPage> {
                     padding: const EdgeInsets.all(16.0),
                     child: Column(
                       children: [
+                        // Wrap QR in a solid white background so the exported PNG is not transparent
                         RepaintBoundary(
                           key: _qrKey,
-                          child: QrImageView(
-                            data: payload,
-                            version: QrVersions.auto,
-                            size: 260,
-                            gapless: false,
+                          child: Container(
+                            color: Colors.white,
+                            padding: const EdgeInsets.all(12),
+                            child: QrImageView(
+                              data: payload,
+                              version: QrVersions.auto,
+                              size: 236, // 260 - padding*2 to keep overall approx same footprint
+                              gapless: false,
+                              backgroundColor: Colors.white,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 12),
