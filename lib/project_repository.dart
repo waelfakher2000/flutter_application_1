@@ -129,6 +129,13 @@ class ProjectRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  void deleteGroupAndProjects(String id) {
+    _projects.removeWhere((p) => p.groupId == id);
+    _groups.removeWhere((g) => g.id == id);
+    _scheduleSave();
+    notifyListeners();
+  }
+
   void setProjectGroup(String projectId, String? groupId) {
     final i = _projects.indexWhere((e) => e.id == projectId);
     if (i < 0) return;

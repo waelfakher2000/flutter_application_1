@@ -1162,9 +1162,9 @@ class _MainTankPageState extends State<MainTankPage> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
-                          _statCard('Liquid %', '${percent.toStringAsFixed(1)} %', minHeight: statH, dense: dense),
-                          _statCard('Level (m)', '${_level.toStringAsFixed(3)} m', minHeight: statH, dense: dense),
-                          _statCard('Liquid L', '${(liquidM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+              _statCard('Liquid%', '${percent.toStringAsFixed(1)} %', minHeight: statH, dense: dense),
+              _statCard('Level (m)', '${_level.toStringAsFixed(3)} m', minHeight: statH, dense: dense),
+              _statCard('Empty (m)', (widget.height - _level).toStringAsFixed(3), minHeight: statH, dense: dense),
                         ],
                       ),
                     ],
@@ -1176,9 +1176,9 @@ class _MainTankPageState extends State<MainTankPage> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
-                      _statCard('Empty L', '${(emptyM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
-                      _statCard('Total L', '${(totalM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
-                      _statCard('Empty (m)', (widget.height - _level).toStringAsFixed(3), minHeight: statH, dense: dense),
+            _statCard('Total L', '${(totalM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+            _statCard('Liquid L', '${(liquidM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+            _statCard('Empty L', '${(emptyM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
                     ],
                   ),
                 ),

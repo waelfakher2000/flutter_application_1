@@ -403,19 +403,41 @@ class _ProjectListPageState extends State<ProjectListPage> {
   }
 
   Future<void> _deleteGroup(ProjectGroup group) async {
-    final confirm = await showDialog<bool>(
+    final repo = context.read<ProjectRepository>();
+    final projectCount = repo.projects.where((p) => p.groupId == group.id).length;
+    if (projectCount == 0) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Delete Group'),
+          content: const Text('This group is empty. Delete it?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+          ],
+        ),
+      );
+      if (ok == true) repo.deleteGroup(group.id);
+      return;
+    }
+
+    final choice = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text('Delete Group'),
-        content: const Text('Remove group? Projects will remain and become ungrouped.'),
+        content: Text('Group "${group.name}" contains $projectCount project${projectCount == 1 ? '' : 's'}. What would you like to do?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+          TextButton(onPressed: () => Navigator.pop(context, 'cancel'), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, 'keep'), child: const Text('Ungroup Projects')),
+          FilledButton(onPressed: () => Navigator.pop(context, 'delete'), child: const Text('Delete All')),
         ],
       ),
     );
-    if (confirm != true) return;
-  context.read<ProjectRepository>().deleteGroup(group.id);
+    if (choice == 'keep') {
+      repo.deleteGroup(group.id); // existing behavior ungrouping
+    } else if (choice == 'delete') {
+      repo.deleteGroupAndProjects(group.id);
+    }
   }
 
   // Drag & drop handles moving projects between groups; no separate picker needed.
@@ -724,7 +746,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
                                     : () {
                                         Navigator.of(context).push(
                                           MaterialPageRoute(
-                                            builder: (_) => ShareQrPage(projects: projects),
+                                            builder: (_) => ShareQrPage(projects: projects, groupName: group.name),
                                           ),
                                         );
                                       },
