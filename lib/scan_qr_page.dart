@@ -14,6 +14,7 @@ class ScanQrPage extends StatefulWidget {
 class _ScanQrPageState extends State<ScanQrPage> {
   final MobileScannerController _controller = MobileScannerController();
   bool _handled = false;
+  bool _popping = false;
 
   @override
   void dispose() {
@@ -57,14 +58,54 @@ class _ScanQrPageState extends State<ScanQrPage> {
     final picker = ImagePicker();
     final XFile? file = await picker.pickImage(source: ImageSource.gallery);
     if (file == null) return;
-  // For now, gallery decode requires additional plugin setup. Placeholder: show snackbar.
-  if (!mounted) return;
-  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Gallery QR decode pending dependency setup.')));
-  return;
+    try {
+      final path = file.path;
+      if (path.isEmpty) return;
+      // mobile_scanner exposes analyzeImage for still images (native); if unsupported catch and fallback.
+      final success = await _controller.analyzeImage(path);
+      if (!success) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No QR code found in image.')));
+        return; 
+      }
+      // analyzeImage will trigger onDetect; we just wait briefly
+      return;
+      /* Deprecated manual handling kept for reference
+      final raw = ...;
+      if (raw == null || raw.isEmpty) {
+        if (!mounted) return; 
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid QR data.')));
+        return;
+      }
+      // Reuse logic similar to live scan
+      try {
+        final multi = ProjectShareCodec.decodeProjects(raw);
+        if (multi.isNotEmpty) {
+          if (!mounted) return;
+          _handled = true;
+          await _showMultiImportDialog(multi);
+          return;
+        }
+      } catch (_) {}
+      try {
+        final single = ProjectShareCodec.decodeProject(raw);
+        if (!mounted) return;
+        _handled = true;
+        await _showPreviewAndReturn(single);
+        return;
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Unrecognized QR format.')));
+  }*/
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gallery decode failed: $e')));
+    }
   }
 
   Future<void> _showPreviewAndReturn(Project project) async {
-    await showDialog(
+  if (!mounted) return;
+  await showDialog(
       context: context,
       builder: (context) {
         final theme = Theme.of(context);
@@ -103,11 +144,16 @@ class _ScanQrPageState extends State<ScanQrPage> {
     );
 
     if (!mounted) return;
-    Navigator.of(context).pop(project);
+    if (_popping) return;
+    _popping = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.of(context).pop(project);
+    });
   }
 
   Future<void> _showMultiImportDialog(List<Project> projects) async {
-    await showDialog(
+  if (!mounted) return;
+  await showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Import ${projects.length} Projects'),
@@ -138,8 +184,12 @@ class _ScanQrPageState extends State<ScanQrPage> {
         ],
       ),
     ).then((ok) {
-      if (ok == true) {
-        Navigator.of(context).pop(projects);
+      if (!mounted) return;
+      if (ok == true && !_popping) {
+        _popping = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) Navigator.of(context).pop(projects);
+        });
       }
     });
   }
