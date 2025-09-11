@@ -66,7 +66,7 @@ class ProjectShareCodec {
   }
 
   // Encode multiple projects (group). Credentials optional.
-  static String encodeProjects(List<Project> projects, {bool includeCredentials = false}) {
+  static String encodeProjects(List<Project> projects, {bool includeCredentials = false, String? groupName}) {
     final list = projects.map((p) {
       final m = Map<String, dynamic>.from(p.toJson());
       if (!includeCredentials) {
@@ -77,6 +77,7 @@ class ProjectShareCodec {
     }).toList();
     final env = ShareEnvelope(type: 'tank_projects', version: 1, body: {
       'projects': list,
+      if (groupName != null && groupName.trim().isNotEmpty) 'groupName': groupName.trim(),
     });
     final jsonStr = jsonEncode(env.toJson());
     final zipped = _gzipEncode(utf8.encode(jsonStr));
@@ -89,6 +90,14 @@ class ProjectShareCodec {
     final env = ShareEnvelope.fromJson(jsonDecode(jsonStr));
     if (env.type != 'tank_projects') throw FormatException('Unsupported type: ${env.type}');
     final list = env.body['projects'] as List<dynamic>;
-    return list.map((e) => Project.fromJson(e as Map<String, dynamic>)).toList();
+    final groupName = env.body['groupName'] as String?; // may be null
+    final projects = list.map((e) => Project.fromJson(e as Map<String, dynamic>)).toList();
+    if (groupName != null) {
+      // temporarily stash desired group name in groupId field using a marker prefix to handle later
+      for (final p in projects) {
+        p.groupId = '__IMPORT_GROUP_NAME__:$groupName';
+      }
+    }
+    return projects;
   }
 }

@@ -235,12 +235,38 @@ class _ProjectListPageState extends State<ProjectListPage> {
     if (result is Project) {
       await _handleImport(result);
     } else if (result is List<Project>) {
+      // Detect group name marker
+      final repo = context.read<ProjectRepository>();
+      String? markerGroupName;
+      for (final p in result) {
+        if (p.groupId != null && p.groupId!.startsWith('__IMPORT_GROUP_NAME__:')) {
+          markerGroupName = p.groupId!.split(':').skip(1).join(':');
+          p.groupId = null; // clear for now
+        }
+      }
+      String? targetGroupId;
+      if (markerGroupName != null && markerGroupName.trim().isNotEmpty) {
+        // Try find existing group with same name
+        final existing = repo.groups.firstWhere(
+          (g) => g.name.toLowerCase() == markerGroupName!.toLowerCase(),
+          orElse: () => ProjectGroup(name: markerGroupName!),
+        );
+        if (existing.id == '') {
+          // unreachable: ProjectGroup generates id automatically; but keep logic simple
+        }
+        if (!repo.groups.contains(existing)) {
+          repo.addGroup(existing);
+        }
+        targetGroupId = existing.id;
+      }
       for (final p in result) {
         await _handleImport(p);
+        if (targetGroupId != null) {
+          repo.setProjectGroup(p.id, targetGroupId);
+        }
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Imported ${result.length} projects')), );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Imported ${result.length} projects${markerGroupName != null ? ' into group "$markerGroupName"' : ''}')));
       }
     }
   }

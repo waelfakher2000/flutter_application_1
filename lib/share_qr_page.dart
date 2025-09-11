@@ -37,9 +37,16 @@ class _ShareQrPageState extends State<ShareQrPage> {
 
   String _buildPayload() {
     if (widget.projects != null) {
-      return ProjectShareCodec.encodeProjects(widget.projects!, includeCredentials: includeCredentials);
+      // Determine if all projects share same group name (not id). For simplicity, take first non-null groupId not used here; group name not stored separately, so omit unless consistent pattern.
+      // We can't reliably extract group name without repository; leave null (caller could extend). Placeholder.
+      return ProjectShareCodec.encodeProjects(widget.projects!, includeCredentials: includeCredentials, groupName: _deriveGroupName());
     }
     return ProjectShareCodec.encodeProject(widget.project!, includeCredentials: includeCredentials);
+  }
+
+  String? _deriveGroupName() {
+    // Without repository context we can't map groupId -> name; so attempt heuristic: if project.name has pattern [Group] prefix? For now return null.
+    return null;
   }
 
   Future<void> _shareText() async {
