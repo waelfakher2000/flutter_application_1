@@ -186,10 +186,14 @@ class _ScanQrPageState extends State<ScanQrPage> {
     ).then((ok) {
       if (!mounted) return;
       if (ok == true && !_popping) {
+        _handled = true;
         _popping = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) Navigator.of(context).pop(projects);
         });
+      } else if (ok != true) {
+        // allow scanning to continue
+        setState(() => _handled = false);
       }
     });
   }

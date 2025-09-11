@@ -229,10 +229,20 @@ class _ProjectListPageState extends State<ProjectListPage> {
   }
 
   Future<void> _scanImport() async {
-    final imported = await Navigator.of(context).push<Project>(
+    final result = await Navigator.of(context).push(
       MaterialPageRoute(builder: (context) => const ScanQrPage()),
     );
-  if (imported != null) await _handleImport(imported);
+    if (result is Project) {
+      await _handleImport(result);
+    } else if (result is List<Project>) {
+      for (final p in result) {
+        await _handleImport(p);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Imported ${result.length} projects')), );
+      }
+    }
   }
 
   Future<void> _handleImport(Project imported) async {
