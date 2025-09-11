@@ -101,7 +101,11 @@ flutter run
 Open a PR or issue with detailed description. Keep commits focused and prefer small, reviewable changes.
 
 ## License
-Currently unlicensed (all rights reserved by the author). Add a LICENSE file before external distribution if needed.
+Proprietary – All Rights Reserved.
+
+This repository’s source is published for visibility and personal evaluation only. No rights are granted to copy, redistribute, publish, resell, or create derivative works without explicit written permission from the copyright holder (Wael Jihad Fakher). See `LICENSE` for full terms.
+
+For commercial use, redistribution, or integration requests, contact: Wael Jihad Fakher.
 
 ---
 Generated enhanced README to describe real functionality replacing default Flutter template.
