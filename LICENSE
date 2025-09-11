@@ -1,21 +1,42 @@
-MIT License
+Proprietary License – All Rights Reserved
 
-Copyright (c) 2025 waelfakher2000
+Copyright (c) 2025 Wael Jihad Fakher. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. Ownership
+	This software (the "Application") and all associated source code, assets, and documentation are the exclusive property of Wael Jihad Fakher.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+2. Granted Rights
+	No rights are granted to any third party unless expressly provided in a separate written and signed agreement by the copyright holder. Merely viewing the public repository does NOT grant permission to:
+	- Use the Application in production or commercial contexts
+	- Copy, modify, merge, translate, reverse engineer, or create derivative works
+	- Distribute, sublicense, sell, rent, lease, or host the Application or any portion
+	- Remove or alter copyright, trademark, or proprietary notices
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+3. Prohibited Actions
+	Without prior written consent from Wael Jihad Fakher you may NOT:
+	- Redistribute the source or binaries
+	- Publish the software on any store or platform
+	- Incorporate any part into another product
+	- Sell access, licenses, or derivative products
+
+4. Internal / Personal Viewing
+	Cloning or viewing the repository for evaluation is allowed ONLY for non‑commercial, read‑only inspection. Any execution, adaptation, or integration beyond transient local testing requires explicit permission.
+
+5. Liability & Warranty
+	THE APPLICATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO FITNESS FOR A PARTICULAR PURPOSE, MERCHANTABILITY, OR NON‑INFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM USE, INABILITY TO USE, OR UNAUTHORIZED USE OF THE APPLICATION.
+
+6. Security & Compliance
+	You may not use the Application in any manner that violates applicable law, regulation, export control, or infringes third‑party rights.
+
+7. Enforcement
+	Unauthorized use constitutes infringement and may result in legal action including, but not limited to, takedown requests, damages, and injunctive relief.
+
+8. Licensing Requests
+	For commercial, redistribution, integration, or custom license inquiries, contact: wael (dot) fakher (at) (provide your preferred domain/contact method).
+
+9. Modification of Terms
+	The copyright holder may update this license text at any time. Continued possession or use after an update does not grant new rights.
+
+If you have obtained a separate signed license agreement with Wael Jihad Fakher, its terms override any conflicting clauses here.
+
+All rights reserved.
