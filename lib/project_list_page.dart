@@ -12,6 +12,7 @@ import 'project_group.dart';
 import 'theme_provider.dart';
 import 'types.dart';
 import 'project_repository.dart';
+import 'widgets/scrolling_text.dart';
 import 'mqtt_service.dart';
 import 'dart:math' as math;
 import 'dart:async';
@@ -686,10 +687,11 @@ class _ProjectListPageState extends State<ProjectListPage> {
             ),
             child: ExpansionTile(
               leading: Icon(group == null ? Icons.inbox_outlined : Icons.folder),
-              title: Text(
-                title,
+              title: ScrollingText(
+                text: title,
                 style: const TextStyle(fontWeight: FontWeight.bold, fontStyle: FontStyle.italic),
-                overflow: TextOverflow.ellipsis,
+                pixelsPerSecond: 50,
+                gap: 40,
               ),
               subtitle: Text(
                 '${projects.length} project${projects.length == 1 ? '' : 's'}',
