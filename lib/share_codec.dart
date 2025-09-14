@@ -73,6 +73,7 @@ class ProjectShareCodec {
         m['username'] = null;
         m['password'] = null;
       }
+      // keep custom formula fields as-is
       return m;
     }).toList();
     final env = ShareEnvelope(type: 'tank_projects', version: 1, body: {

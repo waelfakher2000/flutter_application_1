@@ -30,6 +30,9 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   late TextEditingController _multiplierController;
   late TextEditingController _offsetController;
   late TextEditingController _connectedTanksController;
+  // Custom formula
+  bool _useCustomFormula = false;
+  late TextEditingController _customFormulaController;
   // Last Will / Presence
   late TextEditingController _lastWillTopicController;
   // Payload JSON options
@@ -74,6 +77,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
     _multiplierController = TextEditingController(text: p?.multiplier.toString() ?? '1.0');
     _offsetController = TextEditingController(text: p?.offset.toString() ?? '0.0');
   _connectedTanksController = TextEditingController(text: (p?.connectedTankCount ?? 1).toString());
+  _useCustomFormula = p?.useCustomFormula ?? false;
+  _customFormulaController = TextEditingController(text: p?.customFormula ?? '');
   _lastWillTopicController = TextEditingController(text: p?.lastWillTopic ?? '');
   // Control button
   _useControlButton = p?.useControlButton ?? false;
@@ -110,6 +115,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
     _multiplierController.dispose();
     _offsetController.dispose();
     _connectedTanksController.dispose();
+    _customFormulaController.dispose();
   _controlTopicController.dispose();
   _onValueController.dispose();
   _offValueController.dispose();
@@ -143,6 +149,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
         multiplier: double.tryParse(_multiplierController.text) ?? 1.0,
         offset: double.tryParse(_offsetController.text) ?? 0.0,
   connectedTankCount: int.tryParse(_connectedTanksController.text.trim())?.clamp(1, 1000) ?? 1,
+  useCustomFormula: _useCustomFormula,
+  customFormula: _customFormulaController.text.trim().isEmpty ? null : _customFormulaController.text.trim(),
   lastWillTopic: _lastWillTopicController.text.trim().isEmpty ? null : _lastWillTopicController.text.trim(),
   payloadIsJson: _payloadIsJson,
   jsonFieldIndex: int.tryParse(_jsonFieldIndexController.text.trim())?.clamp(1, 9999) ?? 1,
@@ -410,6 +418,46 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                 ),
               ),
               const SizedBox(height: 16),
+              // Custom Formula
+              Card(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 1,
+                clipBehavior: Clip.antiAlias,
+                child: Column(children: [
+                  sectionHeader('Custom Liters Formula', Icons.functions, scheme.secondary),
+                  Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Use custom formula'),
+                        subtitle: const Text('Compute liters using your own expression'),
+                        value: _useCustomFormula,
+                        onChanged: (v) => setState(() => _useCustomFormula = v),
+                      ),
+                      if (_useCustomFormula) ...[
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: _customFormulaController,
+                          decoration: dec('Formula (liters)', Icons.calculate, hint: 'e.g. 4*H*L*(W+1.25)'),
+                          maxLines: 2,
+                          validator: (v) {
+                            if (!_useCustomFormula) return null;
+                            if (v == null || v.trim().isEmpty) return 'Enter a formula or disable this option';
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        Text('Variables: h=current level (m), H=height (m), L=length (m), W=width (m), D=diameter (m), N=connected tanks count',
+                            style: Theme.of(context).textTheme.bodySmall),
+                        const SizedBox(height: 4),
+                        Text('Tip: Use parentheses and * for multiplication. Result must be liters.',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+                      ],
+                    ]),
+                  ),
+                ]),
+              ),
               // Control Button (polished)
               Card(
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

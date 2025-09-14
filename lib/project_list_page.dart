@@ -812,6 +812,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
               multiplier: project.multiplier,
               offset: project.offset,
               connectedTankCount: project.connectedTankCount,
+              useCustomFormula: project.useCustomFormula,
+              customFormula: project.customFormula,
               useControlButton: project.useControlButton,
               controlTopic: project.controlTopic,
               controlMode: project.controlMode,

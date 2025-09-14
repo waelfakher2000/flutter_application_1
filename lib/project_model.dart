@@ -21,6 +21,9 @@ class Project {
   double multiplier;
   double offset;
   int connectedTankCount; // number of identical connected tanks sharing same level (>=1)
+  // Custom liters formula (user-defined)
+  bool useCustomFormula; // when true, use customFormula to compute liters
+  String? customFormula; // expression evaluated in liters using variables h,H,L,W,D,N
   // Control button settings
   bool useControlButton;
   String? controlTopic; // topic to publish to
@@ -65,7 +68,9 @@ class Project {
     this.maxThreshold,
     this.multiplier = 1.0,
     this.offset = 0.0,
-    this.connectedTankCount = 1,
+  this.connectedTankCount = 1,
+  this.useCustomFormula = false,
+  this.customFormula,
   this.useControlButton = false,
   this.controlTopic,
   this.controlMode = ControlMode.toggle,
@@ -107,6 +112,8 @@ class Project {
       'multiplier': multiplier,
       'offset': offset,
       'connectedTankCount': connectedTankCount,
+  'useCustomFormula': useCustomFormula,
+  'customFormula': customFormula,
   'useControlButton': useControlButton,
   'controlTopic': controlTopic,
   'controlMode': controlMode.toString(),
@@ -151,6 +158,8 @@ class Project {
     connectedTankCount: (json['connectedTankCount'] is int)
       ? (json['connectedTankCount'] as int).clamp(1, 1000)
       : int.tryParse('${json['connectedTankCount'] ?? '1'}')?.clamp(1, 1000) ?? 1,
+      useCustomFormula: json['useCustomFormula'] == true,
+      customFormula: (json['customFormula']?.toString().trim().isEmpty ?? true) ? null : json['customFormula'].toString(),
       useControlButton: json['useControlButton'] == true,
       controlTopic: json['controlTopic'],
       controlMode: ControlMode.values.firstWhere(
@@ -213,6 +222,8 @@ class Project {
     double? multiplier,
     double? offset,
   int? connectedTankCount,
+    bool? useCustomFormula,
+    String? customFormula,
     bool? useControlButton,
     String? controlTopic,
     ControlMode? controlMode,
@@ -252,6 +263,8 @@ class Project {
       multiplier: multiplier ?? this.multiplier,
       offset: offset ?? this.offset,
   connectedTankCount: connectedTankCount ?? this.connectedTankCount,
+    useCustomFormula: useCustomFormula ?? this.useCustomFormula,
+    customFormula: customFormula ?? this.customFormula,
       useControlButton: useControlButton ?? this.useControlButton,
       controlTopic: controlTopic ?? this.controlTopic,
       controlMode: controlMode ?? this.controlMode,

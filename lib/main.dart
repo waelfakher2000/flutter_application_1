@@ -592,6 +592,9 @@ class MainTankPage extends StatefulWidget {
   final double multiplier;
   final double offset;
   final int connectedTankCount;
+  // Custom formula options
+  final bool useCustomFormula;
+  final String? customFormula;
   // Control button config
   final bool useControlButton;
   final String? controlTopic;
@@ -648,6 +651,8 @@ class MainTankPage extends StatefulWidget {
   this.displayTimeFromJson = false,
   this.jsonTimeFieldIndex = 1,
   this.jsonTimeKeyName,
+  this.useCustomFormula = false,
+  this.customFormula,
   });
 
   @override
@@ -957,6 +962,24 @@ class _MainTankPageState extends State<MainTankPage> {
 
   // Volume calculators
   double _totalVolumeM3() {
+    // If using custom formula, evaluate with h=H to estimate total liters (capacity)
+    if (widget.useCustomFormula == true && (widget.customFormula?.trim().isNotEmpty ?? false)) {
+      try {
+        final liters = _evalCustomFormulaLiters(
+          widget.customFormula!,
+          h: widget.height, // treat full level
+          H: widget.height,
+          L: widget.length,
+          W: widget.width,
+          D: widget.diameter,
+          N: widget.connectedTankCount.toDouble(),
+        );
+        return max(0.0, liters) / 1000.0;
+      } catch (e) {
+        debugPrint('Custom total formula error: $e');
+        // Fallback to geometry
+      }
+    }
     switch (widget.tankType) {
       case TankType.verticalCylinder:
         final r = widget.diameter / 2.0;
@@ -970,7 +993,25 @@ class _MainTankPageState extends State<MainTankPage> {
   }
 
   double _liquidVolumeM3() {
-    switch (widget.tankType) {
+    // If using custom formula, compute liters directly and convert to m^3
+    if (widget.useCustomFormula == true && (widget.customFormula?.trim().isNotEmpty ?? false)) {
+      try {
+        final liters = _evalCustomFormulaLiters(
+          widget.customFormula!,
+          h: _level,
+          H: widget.height,
+          L: widget.length,
+          W: widget.width,
+          D: widget.diameter,
+          N: widget.connectedTankCount.toDouble(),
+        );
+        return max(0.0, liters) / 1000.0; // convert L to m^3
+      } catch (e) {
+        debugPrint('Custom formula error: $e');
+        // Fallback to geometry
+      }
+    }
+  switch (widget.tankType) {
       case TankType.verticalCylinder:
         final r = widget.diameter / 2.0;
   return pi * r * r * (_level) * widget.connectedTankCount;
@@ -981,6 +1022,66 @@ class _MainTankPageState extends State<MainTankPage> {
       case TankType.rectangle:
   return widget.length * widget.width * (_level) * widget.connectedTankCount;
     }
+  }
+
+  // Very small expression evaluator for +,-,*,/,(), variables.
+  // This is intentionally limited; for complex needs, consider adding a parser library.
+  double _evalCustomFormulaLiters(String expr, {required double h, required double H, required double L, required double W, required double D, required double N}) {
+    final tokens = <String>[];
+    String s = expr.replaceAll(RegExp(r"\s+"), '');
+    // Replace variables with numeric literals (safe digits and dot), keep operators and parentheses
+    s = s.replaceAllMapped(RegExp(r"\b[hHLDWN]\b"), (m) {
+      switch (m[0]) {
+        case 'h': return h.toString();
+        case 'H': return H.toString();
+        case 'L': return L.toString();
+        case 'W': return W.toString();
+        case 'D': return D.toString();
+        case 'N': return N.toString();
+      }
+      return '0';
+    });
+    // Tokenize numbers and operators
+    final re = RegExp(r"(\d+\.\d+|\d+|[+\-*/()])");
+    for (final m in re.allMatches(s)) {
+      tokens.add(m.group(0)!);
+    }
+    int i = 0;
+    late double Function() parseExpression;
+    double parseFactor() {
+      if (i >= tokens.length) throw FormatException('Unexpected end');
+      final t = tokens[i++];
+      if (t == '(') {
+        final v = parseExpression();
+        if (i >= tokens.length || tokens[i] != ')') throw FormatException('Missing )');
+        i++;
+        return v;
+      }
+      if (t == '+') return parseFactor();
+      if (t == '-') return -parseFactor();
+      return double.parse(t);
+    }
+    double parseTerm() {
+      double x = parseFactor();
+      while (i < tokens.length && (tokens[i] == '*' || tokens[i] == '/')) {
+        final op = tokens[i++];
+        final y = parseFactor();
+        x = op == '*' ? x * y : x / y;
+      }
+      return x;
+    }
+    parseExpression = () {
+      double x = parseTerm();
+      while (i < tokens.length && (tokens[i] == '+' || tokens[i] == '-')) {
+        final op = tokens[i++];
+        final y = parseTerm();
+        x = op == '+' ? x + y : x - y;
+      }
+      return x;
+    };
+    final v = parseExpression();
+    if (i != tokens.length) throw FormatException('Unexpected token: ${tokens[i]}');
+    return v;
   }
 
   // Horizontal cylinder: full volume calculation helper (used for total)
