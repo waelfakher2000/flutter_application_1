@@ -10,6 +10,10 @@ class ProjectRepository extends ChangeNotifier {
   List<ProjectGroup> _groups = [];
   bool _loaded = false;
   Timer? _debounce;
+  // Persisted custom order of projects by id (global order that groups tap into)
+  List<String> _projectOrder = [];
+  // Persisted custom order of groups by id
+  List<String> _groupOrder = [];
 
   bool get isLoaded => _loaded;
   UnmodifiableListView<Project> get projects => UnmodifiableListView(_projects);
@@ -19,12 +23,32 @@ class ProjectRepository extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final pStr = prefs.getString('projects');
     final gStr = prefs.getString('project_groups');
+    final storedOrder = prefs.getStringList('project_order');
+    final storedGroupOrder = prefs.getStringList('group_order');
     if (pStr != null) {
       _projects = Project.decode(pStr);
     }
     if (gStr != null) {
       _groups = ProjectGroup.decode(gStr);
     }
+    // Initialize order: use stored order if present, else current list order
+    _projectOrder = storedOrder ?? _projects.map((e) => e.id).toList(growable: true);
+    // Ensure order contains all current ids and remove unknowns
+    final existingIds = _projects.map((e) => e.id).toSet();
+    _projectOrder = [
+      ..._projectOrder.where(existingIds.contains),
+      ..._projects.map((e) => e.id).where((id) => !_projectOrder.contains(id)),
+    ];
+    // Sort _projects according to order
+    _projects.sort((a, b) => _projectOrder.indexOf(a.id).compareTo(_projectOrder.indexOf(b.id)));
+    // Groups order
+    _groupOrder = storedGroupOrder ?? _groups.map((e) => e.id).toList(growable: true);
+    final existingGroupIds = _groups.map((e) => e.id).toSet();
+    _groupOrder = [
+      ..._groupOrder.where(existingGroupIds.contains),
+      ..._groups.map((e) => e.id).where((id) => !_groupOrder.contains(id)),
+    ];
+    _groups.sort((a, b) => _groupOrder.indexOf(a.id).compareTo(_groupOrder.indexOf(b.id)));
     _loaded = true;
     notifyListeners();
   }
@@ -53,12 +77,15 @@ class ProjectRepository extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('projects', Project.encode(_projects));
       await prefs.setString('project_groups', ProjectGroup.encode(_groups));
+      await prefs.setStringList('project_order', _projectOrder);
+      await prefs.setStringList('group_order', _groupOrder);
     } catch (_) {}
   }
 
   // Project ops
   void addProject(Project p) {
     _projects.add(p);
+    _projectOrder.add(p.id);
     _scheduleSave();
     notifyListeners();
   }
@@ -80,6 +107,7 @@ class ProjectRepository extends ChangeNotifier {
 
   void deleteProject(String id) {
     _projects.removeWhere((e) => e.id == id);
+    _projectOrder.removeWhere((e) => e == id);
     _scheduleSave();
     notifyListeners();
   }
@@ -109,6 +137,7 @@ class ProjectRepository extends ChangeNotifier {
   // Groups
   void addGroup(ProjectGroup g) {
     _groups.add(g);
+    _groupOrder.add(g.id);
     _scheduleSave();
     notifyListeners();
   }
@@ -125,6 +154,7 @@ class ProjectRepository extends ChangeNotifier {
   void deleteGroup(String id) {
     _projects = _projects.map((p) => p.groupId == id ? p.copyWith(groupId: null) : p).toList();
     _groups.removeWhere((g) => g.id == id);
+    _groupOrder.removeWhere((e) => e == id);
     _scheduleSave();
     notifyListeners();
   }
@@ -132,6 +162,7 @@ class ProjectRepository extends ChangeNotifier {
   void deleteGroupAndProjects(String id) {
     _projects.removeWhere((p) => p.groupId == id);
     _groups.removeWhere((g) => g.id == id);
+    _groupOrder.removeWhere((e) => e == id);
     _scheduleSave();
     notifyListeners();
   }
@@ -140,6 +171,58 @@ class ProjectRepository extends ChangeNotifier {
     final i = _projects.indexWhere((e) => e.id == projectId);
     if (i < 0) return;
     _projects[i] = _projects[i].copyWith(groupId: groupId);
+    _scheduleSave();
+    notifyListeners();
+  }
+
+  // Reorder projects within a specific group (groupId may be null for ungrouped)
+  void reorderWithinGroup(String? groupId, List<String> orderedIds) {
+    // Build mapping for quick lookup
+    // Sanity: keep only ids that actually belong to this group
+    final belongs = <String>{};
+    for (final id in orderedIds) {
+      final p = getById(id);
+      if (p != null && p.groupId == groupId) belongs.add(id);
+    }
+    // Merge with current order by replacing the relative order of group items in-place
+    int idx = 0;
+    final newOrder = <String>[];
+    for (final id in _projectOrder) {
+      final p = getById(id);
+      final bool isInGroup = p != null && p.groupId == groupId;
+      if (isInGroup) {
+        // pick next from orderedIds that belongs
+        while (idx < orderedIds.length && !belongs.contains(orderedIds[idx])) {
+          idx++;
+        }
+        if (idx < orderedIds.length) {
+          newOrder.add(orderedIds[idx]);
+          idx++;
+        } else {
+          // fallback: keep original id if something went off
+          newOrder.add(id);
+        }
+      } else {
+        newOrder.add(id);
+      }
+    }
+    _projectOrder = newOrder;
+    // Now reorder _projects to match new order
+    _projects.sort((a, b) => _projectOrder.indexOf(a.id).compareTo(_projectOrder.indexOf(b.id)));
+    _scheduleSave();
+    notifyListeners();
+  }
+
+  // Reorder groups globally according to orderedIds
+  void reorderGroups(List<String> orderedIds) {
+    final existing = _groups.map((e) => e.id).toSet();
+    final filtered = orderedIds.where(existing.contains).toList(growable: true);
+    // Append any missing groups (e.g., newly added) at the end in their current order
+    for (final g in _groups) {
+      if (!filtered.contains(g.id)) filtered.add(g.id);
+    }
+    _groupOrder = filtered;
+    _groups.sort((a, b) => _groupOrder.indexOf(a.id).compareTo(_groupOrder.indexOf(b.id)));
     _scheduleSave();
     notifyListeners();
   }

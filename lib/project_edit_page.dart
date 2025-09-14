@@ -2,6 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_application_1/project_model.dart';
 import 'package:flutter_application_1/types.dart';
+// Online AI removed; offline helper only
+
+// Simple container for AI helper results
+class _AiResult {
+  final String formula;
+  final String note;
+  _AiResult(this.formula, this.note);
+}
 
 class ProjectEditPage extends StatefulWidget {
   final Project? project;
@@ -25,6 +33,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   late TextEditingController _diameterController;
   late TextEditingController _lengthController;
   late TextEditingController _widthController;
+  late TextEditingController _thicknessController;
   late TextEditingController _minController;
   late TextEditingController _maxController;
   late TextEditingController _multiplierController;
@@ -33,6 +42,16 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   // Custom formula
   bool _useCustomFormula = false;
   late TextEditingController _customFormulaController;
+  // Test preview controllers
+  late TextEditingController _testLevelController;
+  String? _formulaError;
+  double? _formulaPreviewLiters;
+  // AI helper (offline only) state
+  late TextEditingController _aiDescriptionController;
+  String? _aiSuggestion;
+  String? _aiNote;
+  String? _aiError;
+  final bool _aiBusy = false;
   // Last Will / Presence
   late TextEditingController _lastWillTopicController;
   // Payload JSON options
@@ -71,7 +90,9 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
     _heightController = TextEditingController(text: p?.height.toString() ?? '1.0');
     _diameterController = TextEditingController(text: p?.diameter.toString() ?? '0.4');
     _lengthController = TextEditingController(text: p?.length.toString() ?? '1.0');
-    _widthController = TextEditingController(text: p?.width.toString() ?? '0.5');
+  _widthController = TextEditingController(text: p?.width.toString() ?? '0.5');
+  // Show wall thickness in mm for user editing
+  _thicknessController = TextEditingController(text: ((p?.wallThickness ?? 0.0) * 1000).toString());
     _minController = TextEditingController(text: p?.minThreshold?.toString());
     _maxController = TextEditingController(text: p?.maxThreshold?.toString());
     _multiplierController = TextEditingController(text: p?.multiplier.toString() ?? '1.0');
@@ -79,7 +100,10 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   _connectedTanksController = TextEditingController(text: (p?.connectedTankCount ?? 1).toString());
   _useCustomFormula = p?.useCustomFormula ?? false;
   _customFormulaController = TextEditingController(text: p?.customFormula ?? '');
+  _testLevelController = TextEditingController(text: (p?.height ?? 1.0).toStringAsFixed(3));
+  _aiDescriptionController = TextEditingController();
   _lastWillTopicController = TextEditingController(text: p?.lastWillTopic ?? '');
+  // Online AI optional; UI controlled by _useOnlineAi
   // Control button
   _useControlButton = p?.useControlButton ?? false;
   _controlTopicController = TextEditingController(text: p?.controlTopic ?? '');
@@ -109,13 +133,16 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
     _heightController.dispose();
     _diameterController.dispose();
     _lengthController.dispose();
-    _widthController.dispose();
+  _widthController.dispose();
+  _thicknessController.dispose();
     _minController.dispose();
     _maxController.dispose();
     _multiplierController.dispose();
     _offsetController.dispose();
     _connectedTanksController.dispose();
-    _customFormulaController.dispose();
+  _customFormulaController.dispose();
+  _testLevelController.dispose();
+  _aiDescriptionController.dispose();
   _controlTopicController.dispose();
   _onValueController.dispose();
   _offValueController.dispose();
@@ -124,6 +151,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   _jsonKeyNameController.dispose();
   _jsonTimeFieldIndexController.dispose();
   _jsonTimeKeyNameController.dispose();
+  // Online AI removed
     super.dispose();
   }
 
@@ -144,6 +172,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
         diameter: double.parse(_diameterController.text),
         length: double.parse(_lengthController.text),
         width: double.parse(_widthController.text),
+  // Convert from mm (UI) to meters for storage
+  wallThickness: ((double.tryParse(_thicknessController.text) ?? 0.0) / 1000.0),
         minThreshold: _minController.text.isNotEmpty ? double.parse(_minController.text) : null,
         maxThreshold: _maxController.text.isNotEmpty ? double.parse(_maxController.text) : null,
         multiplier: double.tryParse(_multiplierController.text) ?? 1.0,
@@ -171,6 +201,307 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
     }
   }
 
+  void _onTestFormula() {
+    setState(() {
+      _formulaError = null;
+      _formulaPreviewLiters = null;
+    });
+    final expr = _customFormulaController.text.trim();
+    if (expr.isEmpty) {
+      setState(() => _formulaError = 'Enter a formula to test');
+      return;
+    }
+    final h = double.tryParse(_testLevelController.text.trim());
+    if (h == null) {
+      setState(() => _formulaError = 'Enter a valid example level (meters)');
+      return;
+    }
+    try {
+      final liters = _evalCustomFormulaLiters(
+        expr,
+        h: h,
+        H: double.tryParse(_heightController.text.trim()) ?? 0.0,
+        L: double.tryParse(_lengthController.text.trim()) ?? 0.0,
+        W: double.tryParse(_widthController.text.trim()) ?? 0.0,
+        D: double.tryParse(_diameterController.text.trim()) ?? 0.0,
+        N: double.tryParse(_connectedTanksController.text.trim()) ?? 1.0,
+      );
+      setState(() => _formulaPreviewLiters = liters);
+    } catch (e) {
+      setState(() => _formulaError = 'Formula error: ${e.toString()}');
+    }
+  }
+
+  // Minimal evaluator replicated from main page to test formulas locally
+  double _evalCustomFormulaLiters(String expr, {required double h, required double H, required double L, required double W, required double D, required double N}) {
+    String s = expr.replaceAll(RegExp(r"\s+"), '');
+    final rawTokens = <Map<String, String>>[];
+    int p = 0;
+    while (p < s.length) {
+      final ch = s[p];
+      if (ch == '(') { rawTokens.add({'t': 'l', 'v': ch}); p++; continue; }
+      if (ch == ')') { rawTokens.add({'t': 'r', 'v': ch}); p++; continue; }
+      if ('+-*/'.contains(ch)) { rawTokens.add({'t': 'op', 'v': ch}); p++; continue; }
+      if (RegExp(r"[A-Za-z]").hasMatch(ch)) {
+        final start = p; p++;
+        while (p < s.length && RegExp(r"[A-Za-z]").hasMatch(s[p])) { p++; }
+        final name = s.substring(start, p);
+        final n = name.toLowerCase();
+        double val;
+        if (n == 'h' || n == 'level' || n == 'lvl') {
+          val = h;
+        } else if (n == 'height' || name == 'H') {
+          val = H;
+        } else if (n == 'l' || n == 'length' || n == 'len') {
+          val = L;
+        } else if (n == 'w' || n == 'width' || n == 'wid') {
+          val = W;
+        } else if (n == 'd' || n == 'diameter' || n == 'dia') {
+          val = D;
+        } else if (n == 'n' || n == 'count' || n == 'tanks') {
+          val = N;
+        } else {
+          throw FormatException('Unknown variable: $name');
+        }
+        rawTokens.add({'t': 'num', 'v': val.toString()});
+        continue;
+      }
+      if (RegExp(r"[0-9.]").hasMatch(ch)) {
+        final start = p; p++;
+        while (p < s.length && RegExp(r"[0-9.]").hasMatch(s[p])) { p++; }
+        rawTokens.add({'t': 'num', 'v': s.substring(start, p)});
+        continue;
+      }
+      throw FormatException('Unknown character in formula: $ch');
+    }
+    final withMul = <Map<String, String>>[];
+    for (int i2 = 0; i2 < rawTokens.length; i2++) {
+      final cur = rawTokens[i2];
+      withMul.add(cur);
+      if (i2 + 1 < rawTokens.length) {
+        final next = rawTokens[i2 + 1];
+        final curIsNumOrR = cur['t'] == 'num' || cur['t'] == 'r';
+        final nextIsNumOrL = next['t'] == 'num' || next['t'] == 'l';
+        if (curIsNumOrR && nextIsNumOrL) {
+          withMul.add({'t': 'op', 'v': '*'});
+        }
+      }
+    }
+    final tokens = withMul.map<String>((m) => m['v'] as String).toList();
+    int i = 0;
+    late double Function() parseExpression;
+    double parseFactor() {
+      if (i >= tokens.length) throw FormatException('Unexpected end');
+      final t = tokens[i++];
+      if (t == '(') {
+        final v = parseExpression();
+        if (i >= tokens.length || tokens[i] != ')') throw FormatException('Missing )');
+        i++;
+        return v;
+      }
+      if (t == '+') return parseFactor();
+      if (t == '-') return -parseFactor();
+      return double.parse(t);
+    }
+    double parseTerm() {
+      double x = parseFactor();
+      while (i < tokens.length && (tokens[i] == '*' || tokens[i] == '/')) {
+        final op = tokens[i++];
+        final y = parseFactor();
+        x = op == '*' ? x * y : x / y;
+      }
+      return x;
+    }
+    parseExpression = () {
+      double x = parseTerm();
+      while (i < tokens.length && (tokens[i] == '+' || tokens[i] == '-')) {
+        final op = tokens[i++];
+        final y = parseTerm();
+        x = op == '+' ? x + y : x - y;
+      }
+      return x;
+    };
+    final v = parseExpression();
+    if (i != tokens.length) throw FormatException('Unexpected token: ${tokens[i]}');
+    return v;
+  }
+
+  // --- AI helper: parse a natural-language description and propose a formula ---
+  void _onGenerateAiFormula() {
+    setState(() {
+      _aiError = null;
+      _aiSuggestion = null;
+      _aiNote = null;
+    });
+    final text = _aiDescriptionController.text.trim();
+    if (text.isEmpty) {
+      setState(() => _aiError = 'Please describe your setup (shape, dimensions, counts).');
+      return;
+    }
+    // Online AI removed; use offline helper only
+    // Offline only
+    try {
+      final res = _generateFormulaFromDescription(text);
+      setState(() {
+        _aiSuggestion = res.formula;
+        _aiNote = res.note;
+      });
+    } catch (e) {
+      setState(() => _aiError = 'Could not generate a formula from the description.');
+    }
+  }
+
+  // Online AI config helpers removed (no API key in proxy mode)
+
+  void _onApplyAiSuggestion() {
+    if (_aiSuggestion == null) return;
+    setState(() {
+      _useCustomFormula = true;
+      _customFormulaController.text = _aiSuggestion!;
+      _formulaError = null;
+      _formulaPreviewLiters = null;
+    });
+  }
+
+  _AiResult _generateFormulaFromDescription(String input) {
+    // Offline heuristic-based parser to map common descriptions to formulas
+    final t = input.toLowerCase();
+    const piVal = 3.14159;
+  bool mentionsRect = t.contains('rectang') || t.contains('box') || t.contains('square');
+  bool mentionsCyl = t.contains('cylind');
+  bool mentionsHorizontal = t.contains('horizontal') || t.contains('lying');
+
+    // 0) Handle explicit grouped rectangular specs like:
+    //    "4 of them are (h=2.25,L=3,w=1.5), and the 4 other are (h=2.25,L=3,w=1.35)"
+    //    We sum base areas (L*W) multiplied by the group counts and produce areaSum*h*1000.
+    double areaSumFromGroups = 0.0;
+    int totalGroupCount = 0;
+    double? firstGroupL, firstGroupW;
+    bool groupsHaveDifferentDims = false;
+    final parenRe = RegExp(r"\(([^\)]*)\)");
+  for (final m in parenRe.allMatches(input)) {
+      final start = m.start;
+      final inside = m.group(1) ?? '';
+      // Find nearest leading integer count within ~20 chars before '('
+      int? count;
+      final leadStart = (start - 24) < 0 ? 0 : (start - 24);
+      final lead = input.substring(leadStart, start);
+      final countMatches = RegExp(r"(\d+)").allMatches(lead).toList();
+      if (countMatches.isNotEmpty) {
+        final cmatch = countMatches.last;
+        count = int.tryParse(cmatch.group(1)!);
+      }
+      count ??= 1;
+      // Parse key=value pairs inside the parentheses
+      final kvRe = RegExp(r"([a-zA-Z]+)\s*=\s*(\d+(?:\.\d+)?)");
+      double? L, W; // we only need base area; 'h' provided in text is the tank height, not used here
+      for (final kv in kvRe.allMatches(inside)) {
+        final key = kv.group(1)!.toLowerCase();
+        final val = double.tryParse(kv.group(2)!);
+        if (val == null) continue;
+        if (key == 'l' || key == 'len' || key == 'length') L = val;
+        if (key == 'w' || key == 'wid' || key == 'width') W = val;
+      }
+      if (L != null && W != null) {
+        areaSumFromGroups += count * L * W;
+        totalGroupCount += count;
+        if (firstGroupL == null || firstGroupW == null) {
+          firstGroupL = L; firstGroupW = W;
+        } else {
+          if ((L - firstGroupL).abs() > 1e-9 || (W - firstGroupW).abs() > 1e-9) {
+            groupsHaveDifferentDims = true;
+          }
+        }
+      }
+    }
+    if (areaSumFromGroups > 0) {
+      if (!groupsHaveDifferentDims && firstGroupL != null && firstGroupW != null) {
+        // All groups share the same L/W → can express symbolically
+        return _AiResult(
+          'N*L*W*h*1000',
+          'Detected rectangular groups with the same dimensions (L=$firstGroupL, W=$firstGroupW). Set L/W in the editor and set N to the total count ($totalGroupCount).\nAlternative exact constant-area: ((${areaSumFromGroups.toStringAsFixed(6)})*h*1000).',
+        );
+      } else {
+        // Different dimensions across groups → a single L/W cannot represent both symbolically
+        return _AiResult(
+          'N*L*W*h*1000',
+          'Detected different rectangular dimensions across groups. A single symbolic formula with only L, W, N cannot represent multiple distinct sizes.\nUse the template N*L*W*h*1000 and set L/W to one tank size with N=$totalGroupCount, or use the exact constant-area alternative: ((${areaSumFromGroups.toStringAsFixed(6)})*h*1000).',
+        );
+      }
+    }
+
+    // Extract numbers and dimension pairs like "2m x 1.5m" or "2 by 1.5"
+    final rectPairs = <List<double>>[];
+    final rectRe = RegExp(r"(\d+(?:\.\d+)?)\s*(?:m|meter|meters|m\.)?\s*(?:x|×|by)\s*(\d+(?:\.\d+)?)", caseSensitive: false);
+    for (final m in rectRe.allMatches(input)) {
+      final a = double.tryParse(m.group(1)!);
+      final b = double.tryParse(m.group(2)!);
+      if (a != null && b != null) rectPairs.add([a, b]);
+    }
+
+    // Extract diameters like "diameter 0.8m" or "0.8 m diameter"
+    final diameters = <double>[];
+    final diaRe1 = RegExp(r"diameter\s*(\d+(?:\.\d+)?)", caseSensitive: false);
+    final diaRe2 = RegExp(r"(\d+(?:\.\d+)?)\s*(?:m|meter|meters|m\.)?\s*diameter", caseSensitive: false);
+    for (final m in diaRe1.allMatches(input)) {
+      final d = double.tryParse(m.group(1)!);
+      if (d != null) diameters.add(d);
+    }
+    for (final m in diaRe2.allMatches(input)) {
+      final d = double.tryParse(m.group(1)!);
+      if (d != null) diameters.add(d);
+    }
+
+    // Extract an explicit tank count for possible future use (not currently needed)
+
+    // If we found specific dimensions, we can propose a constant-area formula:
+    if (rectPairs.isNotEmpty) {
+      // Prefer symbolic template; include constant-area as optional alternative
+      double areaSum = 0.0; // m^2
+      for (final p in rectPairs) {
+        areaSum += p[0] * p[1];
+      }
+      return _AiResult(
+        'N*L*W*h*1000',
+        'Detected rectangular dimensions in description. Use L and W from the editor and set N as needed.\nAlternative exact constant-area from provided numbers: ((${areaSum.toStringAsFixed(6)})*h*1000).',
+      );
+    }
+
+    if (diameters.isNotEmpty) {
+      double areaSum = 0.0; // m^2
+      for (final d in diameters) {
+        areaSum += piVal * (d / 2) * (d / 2);
+      }
+      final liters = '((${areaSum.toStringAsFixed(6)})*h*1000)';
+      final note = mentionsHorizontal
+          ? 'Approximating cylinders with vertical assumption. For precise horizontal cylinders, prefer built-in geometry (disable custom formula).'
+          : 'Summed circular base areas from description.';
+      return _AiResult(liters, note);
+    }
+
+    // Otherwise, fall back to variable-based templates using app standards and current tank type hints
+    if (mentionsRect) {
+      return _AiResult('N*L*W*h*1000', 'Rectangular template using editor dimensions (L, W).');
+    }
+    if (mentionsCyl && mentionsHorizontal) {
+      // Our evaluator cannot express the segment area; advise built-in geometry
+      return _AiResult('N*3.14159*(D/2)*(D/2)*h*1000', 'Approximation for horizontal cylinder. For precise results, use built-in geometry (disable custom formula).');
+    }
+    if (mentionsCyl) {
+      return _AiResult('N*3.14159*(D/2)*(D/2)*h*1000', 'Vertical cylinder template using editor diameter (D).');
+    }
+
+    // Default based on selected tank type
+    switch (_tankType) {
+      case TankType.rectangle:
+        return _AiResult('N*L*W*h*1000', 'Based on Tank Type = Rectangle.');
+      case TankType.verticalCylinder:
+        return _AiResult('N*3.14159*(D/2)*(D/2)*h*1000', 'Based on Tank Type = Vertical cylinder.');
+      case TankType.horizontalCylinder:
+        return _AiResult('N*3.14159*(D/2)*(D/2)*h*1000', 'Approximation for horizontal cylinder. For precise results, use built-in geometry (disable custom formula).');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -179,7 +510,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
           hintText: hint,
           prefixIcon: Icon(icon),
           filled: true,
-          fillColor: scheme.surfaceContainerHighest.withOpacity(0.25),
+          fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.25),
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
@@ -194,7 +525,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
 
     Widget sectionHeader(String title, IconData icon, Color color) => Container(
           decoration: BoxDecoration(
-            color: color.withOpacity(0.12),
+            color: color.withValues(alpha: 0.12),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -453,6 +784,76 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                         const SizedBox(height: 4),
                         Text('Tip: Use parentheses and * for multiplication. Result must be liters.',
                             style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+
+                        const Divider(height: 24),
+                        Text('Test formula', style: Theme.of(context).textTheme.titleSmall),
+                        const SizedBox(height: 8),
+                        Row(children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: _testLevelController,
+                              decoration: dec('Example level h (m)', Icons.straighten),
+                              keyboardType: TextInputType.number,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          ElevatedButton.icon(
+                            onPressed: _onTestFormula,
+                            icon: const Icon(Icons.play_arrow),
+                            label: const Text('Run'),
+                          ),
+                        ]),
+                        const SizedBox(height: 8),
+                        if (_formulaError != null)
+                          Text(_formulaError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                        if (_formulaPreviewLiters != null && _formulaError == null)
+                          Text('Result: ${_formulaPreviewLiters!.toStringAsFixed(2)} L',
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+
+                        const Divider(height: 28),
+                        Text('AI helper (describe your setup)', style: Theme.of(context).textTheme.titleSmall),
+                        const SizedBox(height: 8),
+                        // Freeform description
+                        // Freeform description
+                        TextFormField(
+                          controller: _aiDescriptionController,
+                          decoration: dec('Describe tank(s) and dimensions', Icons.chat_bubble_outline,
+                              hint: 'e.g., Two vertical cylindrical tanks, diameter 1.2m each; rectangular tank 2m by 1m'),
+                          maxLines: 3,
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 8,
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: _aiBusy ? null : _onGenerateAiFormula,
+                              icon: _aiBusy
+                                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                  : const Icon(Icons.auto_fix_high),
+                              label: Text(_aiBusy ? 'Generating…' : 'Generate formula'),
+                            ),
+                            if (_aiSuggestion != null)
+                              OutlinedButton.icon(
+                                onPressed: _onApplyAiSuggestion,
+                                icon: const Icon(Icons.check),
+                                label: const Text('Use suggestion'),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        if (_aiError != null)
+                          Text(_aiError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                        if (_aiSuggestion != null)
+                          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text('Suggestion:', style: Theme.of(context).textTheme.labelMedium),
+                            const SizedBox(height: 4),
+                            SelectableText(_aiSuggestion!, style: Theme.of(context).textTheme.bodyMedium),
+                            if (_aiNote != null) ...[
+                              const SizedBox(height: 6),
+                              Text(_aiNote!, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+                            ]
+                          ]),
                       ],
                     ]),
                   ),
@@ -645,6 +1046,18 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                               validator: (value) => value!.isEmpty || double.tryParse(value) == null ? 'Please enter a valid width' : null,
                             ),
                           ],
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: _thicknessController,
+                            decoration: dec('Wall thickness (mm)', Icons.straighten, hint: '0 for negligible'),
+                            keyboardType: TextInputType.number,
+                            validator: (value) {
+                              if (value == null || value.isEmpty) return null;
+                              final t = double.tryParse(value);
+                              if (t == null || t < 0) return 'Must be >= 0';
+                              return null;
+                            },
+                          ),
                           const SizedBox(height: 12),
                           TextFormField(
                             controller: _minController,

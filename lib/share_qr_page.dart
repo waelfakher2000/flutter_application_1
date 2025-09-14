@@ -12,7 +12,7 @@ class ShareQrPage extends StatefulWidget {
   final Project? project; // single project
   final List<Project>? projects; // multi-project
   final String? groupName; // optional group name when sharing multiple
-  ShareQrPage({super.key, this.project, this.projects, this.groupName});
+  const ShareQrPage({super.key, this.project, this.projects, this.groupName});
 
   @override
   State<ShareQrPage> createState() => _ShareQrPageState();

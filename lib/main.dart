@@ -149,6 +149,7 @@ class _DebugPageState extends State<DebugPage> {
   Future<void> _checkEnabled() async {
     try {
       final enabled = await _ch.invokeMethod('areNotificationsEnabled');
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Notifications enabled: $enabled')));
     } catch (e) {
       debugPrint('check enabled failed: $e');
@@ -209,7 +210,9 @@ class _DebugPageState extends State<DebugPage> {
                       final v = _bridgeController.text.trim();
                       final prefs = await SharedPreferences.getInstance();
                       await prefs.setString('bridgeUrl', v);
+                      if (!mounted) return;
                       setState(() { _bridgeUrl = v; });
+                      if (!context.mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bridge URL saved')));
                     }, child: const Text('Save')),
                     const SizedBox(width: 8),
@@ -384,12 +387,15 @@ class _SensorTankSetupPageState extends State<SensorTankSetupPage> {
   final _widthController = TextEditingController(text: '0.5'); // rectangle width
   final _minController = TextEditingController();
   final _maxController = TextEditingController();
+  // Wall thickness for quick start/setup flow
+  final _thicknessController = TextEditingController(text: '0.0');
 
   Future<void> _goToMain() async {
     final height = double.tryParse(_heightController.text) ?? 0.0;
     final diameter = double.tryParse(_diameterController.text) ?? 0.0;
     final length = double.tryParse(_lengthController.text) ?? 0.0;
     final width = double.tryParse(_widthController.text) ?? 0.0;
+    final thickness = double.tryParse(_thicknessController.text) ?? 0.0;
 
   if ((_tankType == TankType.verticalCylinder && (height <= 0 || diameter <= 0)) ||
       (_tankType == TankType.horizontalCylinder && (diameter <= 0 || length <= 0)) ||
@@ -410,6 +416,7 @@ class _SensorTankSetupPageState extends State<SensorTankSetupPage> {
     await prefs.setDouble('diameter', diameter);
     await prefs.setDouble('length', length);
     await prefs.setDouble('width', width);
+  await prefs.setDouble('wallThickness', thickness);
     if (minThr != null) await prefs.setDouble('minThreshold', minThr);
     if (maxThr != null) await prefs.setDouble('maxThreshold', maxThr);
 
@@ -431,6 +438,7 @@ class _SensorTankSetupPageState extends State<SensorTankSetupPage> {
           diameter: diameter,
           length: length,
           width: width,
+          wallThickness: thickness,
           username: widget.username,
           password: widget.password,
           minThreshold: minThr,
@@ -457,6 +465,11 @@ class _SensorTankSetupPageState extends State<SensorTankSetupPage> {
               keyboardType: TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(labelText: 'Height (m)'),
             ),
+            TextField(
+              controller: _thicknessController,
+              keyboardType: TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'Wall thickness (m)'),
+            ),
           ],
         );
       case TankType.horizontalCylinder:
@@ -471,6 +484,11 @@ class _SensorTankSetupPageState extends State<SensorTankSetupPage> {
               controller: _lengthController,
               keyboardType: TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(labelText: 'Length (m)'),
+            ),
+            TextField(
+              controller: _thicknessController,
+              keyboardType: TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'Wall thickness (m)'),
             ),
           ],
         );
@@ -491,6 +509,11 @@ class _SensorTankSetupPageState extends State<SensorTankSetupPage> {
               controller: _heightController,
               keyboardType: TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(labelText: 'Height (m)'),
+            ),
+            TextField(
+              controller: _thicknessController,
+              keyboardType: TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'Wall thickness (m)'),
             ),
           ],
         );
@@ -514,42 +537,37 @@ class _SensorTankSetupPageState extends State<SensorTankSetupPage> {
           padding: const EdgeInsets.all(16),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             const Text('Sensor Type', style: TextStyle(fontWeight: FontWeight.bold)),
-            ListTile(
-              title: const Text('Submersible (payload = level in meters)'),
-              leading: Radio<SensorType>(
-                  value: SensorType.submersible,
-                  groupValue: _sensorType,
-                  onChanged: (v) => setState(() => _sensorType = v!)),
+            RadioMenuButton<SensorType>(
+              value: SensorType.submersible,
+              groupValue: _sensorType,
+              onChanged: (v) => setState(() => _sensorType = v!),
+              child: const Text('Submersible (payload = level in meters)'),
             ),
-            ListTile(
-              title: const Text('Ultrasonic (payload = distance from sensor to liquid surface in meters)'),
-              leading: Radio<SensorType>(
-                  value: SensorType.ultrasonic,
-                  groupValue: _sensorType,
-                  onChanged: (v) => setState(() => _sensorType = v!)),
+            RadioMenuButton<SensorType>(
+              value: SensorType.ultrasonic,
+              groupValue: _sensorType,
+              onChanged: (v) => setState(() => _sensorType = v!),
+              child: const Text('Ultrasonic (payload = distance from sensor to liquid surface in meters)'),
             ),
             const SizedBox(height: 12),
             const Text('Tank Type', style: TextStyle(fontWeight: FontWeight.bold)),
-            ListTile(
-              title: const Text('Vertical Cylinder'),
-              leading: Radio<TankType>(
-                  value: TankType.verticalCylinder,
-                  groupValue: _tankType,
-                  onChanged: (v) => setState(() => _tankType = v!)),
+            RadioMenuButton<TankType>(
+              value: TankType.verticalCylinder,
+              groupValue: _tankType,
+              onChanged: (v) => setState(() => _tankType = v!),
+              child: const Text('Vertical Cylinder'),
             ),
-            ListTile(
-              title: const Text('Horizontal Cylinder'),
-              leading: Radio<TankType>(
-                  value: TankType.horizontalCylinder,
-                  groupValue: _tankType,
-                  onChanged: (v) => setState(() => _tankType = v!)),
+            RadioMenuButton<TankType>(
+              value: TankType.horizontalCylinder,
+              groupValue: _tankType,
+              onChanged: (v) => setState(() => _tankType = v!),
+              child: const Text('Horizontal Cylinder'),
             ),
-            ListTile(
-              title: const Text('Rectangle'),
-              leading: Radio<TankType>(
-                  value: TankType.rectangle,
-                  groupValue: _tankType,
-                  onChanged: (v) => setState(() => _tankType = v!)),
+            RadioMenuButton<TankType>(
+              value: TankType.rectangle,
+              groupValue: _tankType,
+              onChanged: (v) => setState(() => _tankType = v!),
+              child: const Text('Rectangle'),
             ),
             const SizedBox(height: 8),
             _tankDimensionForm(),
@@ -584,6 +602,8 @@ class MainTankPage extends StatefulWidget {
   final double diameter; // m
   final double length;   // m
   final double width;    // m
+  // Tank wall thickness (meters). Used to compute inner dimensions.
+  final double wallThickness;
   // existing fields...
   final String? username;
   final String? password;
@@ -627,6 +647,7 @@ class MainTankPage extends StatefulWidget {
     required this.diameter,
     required this.length,
     required this.width,
+    this.wallThickness = 0.0,
     this.username,
     this.password,
     this.minThreshold,
@@ -811,6 +832,7 @@ class _MainTankPageState extends State<MainTankPage> {
         'diameter': widget.diameter,
         'length': widget.length,
         'width': widget.width,
+        'wallThickness': widget.wallThickness,
         'username': widget.username,
         'password': widget.password,
         'minThreshold': widget.minThreshold ?? double.nan,
@@ -837,18 +859,31 @@ class _MainTankPageState extends State<MainTankPage> {
 
     // Called when a numeric payload arrives
     setState(() {
+      final t = widget.wallThickness;
+      // Compute inner vertical dimension depending on tank type
+      final innerHeight = () {
+        if (widget.tankType == TankType.horizontalCylinder) {
+          return max(0.0, widget.diameter - 2 * t);
+        } else {
+          return max(0.0, widget.height - 2 * t);
+        }
+      }();
       // Interpret payload depending on sensor type
       if (widget.sensorType == SensorType.submersible) {
         // payload is the liquid level directly (meters from bottom)
         _level = correctedValue;
       } else {
         // ultrasonic: payload is distance from sensor to liquid surface
-        // We assume sensor mounted at tank top; so level = tankHeight - distance
-        _level = widget.height - correctedValue;
+        // We assume sensor mounted at inner tank top; so level = innerHeight - distance
+        _level = innerHeight - correctedValue;
       }
       // clamp to [0, tank height]
       if (_level.isNaN) _level = 0.0;
-      _level = _level.clamp(0.0, widget.height);
+      if (widget.tankType == TankType.horizontalCylinder) {
+        _level = _level.clamp(0.0, innerHeight);
+      } else {
+        _level = _level.clamp(0.0, innerHeight);
+      }
       _lastMessageAt = DateTime.now();
     });
 
@@ -965,13 +1000,18 @@ class _MainTankPageState extends State<MainTankPage> {
     // If using custom formula, evaluate with h=H to estimate total liters (capacity)
     if (widget.useCustomFormula == true && (widget.customFormula?.trim().isNotEmpty ?? false)) {
       try {
+        final t = widget.wallThickness;
+        final H = max(0.0, (widget.tankType == TankType.horizontalCylinder ? widget.diameter : widget.height) - 2 * t);
+        final L = max(0.0, widget.length - 2 * t);
+        final W = max(0.0, widget.width - 2 * t);
+        final D = max(0.0, widget.diameter - 2 * t);
         final liters = _evalCustomFormulaLiters(
           widget.customFormula!,
-          h: widget.height, // treat full level
-          H: widget.height,
-          L: widget.length,
-          W: widget.width,
-          D: widget.diameter,
+          h: H, // treat full level using inner dimensions
+          H: H,
+          L: L,
+          W: W,
+          D: D,
           N: widget.connectedTankCount.toDouble(),
         );
         return max(0.0, liters) / 1000.0;
@@ -982,13 +1022,21 @@ class _MainTankPageState extends State<MainTankPage> {
     }
     switch (widget.tankType) {
       case TankType.verticalCylinder:
-        final r = widget.diameter / 2.0;
-  return pi * r * r * widget.height * widget.connectedTankCount;
+        final t = widget.wallThickness;
+        final r = max(0.0, (widget.diameter - 2.0 * t) / 2.0);
+        final h = max(0.0, widget.height - 2.0 * t);
+        return pi * r * r * h * widget.connectedTankCount;
       case TankType.horizontalCylinder:
-        final r = widget.diameter / 2.0;
-  return _horizontalCylinderVolume(r, widget.length) * widget.connectedTankCount; // full volume
+        final t = widget.wallThickness;
+        final r = max(0.0, (widget.diameter - 2.0 * t) / 2.0);
+        final len = max(0.0, widget.length - 2.0 * t);
+        return _horizontalCylinderVolume(r, len) * widget.connectedTankCount; // full volume
       case TankType.rectangle:
-  return widget.length * widget.width * widget.height * widget.connectedTankCount;
+        final t = widget.wallThickness;
+        final l = max(0.0, widget.length - 2.0 * t);
+        final w = max(0.0, widget.width - 2.0 * t);
+        final h = max(0.0, widget.height - 2.0 * t);
+        return l * w * h * widget.connectedTankCount;
     }
   }
 
@@ -996,13 +1044,18 @@ class _MainTankPageState extends State<MainTankPage> {
     // If using custom formula, compute liters directly and convert to m^3
     if (widget.useCustomFormula == true && (widget.customFormula?.trim().isNotEmpty ?? false)) {
       try {
+        final t = widget.wallThickness;
+        final H = max(0.0, (widget.tankType == TankType.horizontalCylinder ? widget.diameter : widget.height) - 2 * t);
+        final L = max(0.0, widget.length - 2 * t);
+        final W = max(0.0, widget.width - 2 * t);
+        final D = max(0.0, widget.diameter - 2 * t);
         final liters = _evalCustomFormulaLiters(
           widget.customFormula!,
           h: _level,
-          H: widget.height,
-          L: widget.length,
-          W: widget.width,
-          D: widget.diameter,
+          H: H,
+          L: L,
+          W: W,
+          D: D,
           N: widget.connectedTankCount.toDouble(),
         );
         return max(0.0, liters) / 1000.0; // convert L to m^3
@@ -1013,39 +1066,116 @@ class _MainTankPageState extends State<MainTankPage> {
     }
   switch (widget.tankType) {
       case TankType.verticalCylinder:
-        final r = widget.diameter / 2.0;
-  return pi * r * r * (_level) * widget.connectedTankCount;
+        final t = widget.wallThickness;
+        final r = max(0.0, (widget.diameter - 2.0 * t) / 2.0);
+        return pi * r * r * (_level) * widget.connectedTankCount;
       case TankType.horizontalCylinder:
-        final r = widget.diameter / 2.0;
-        final A = _horizontalCylinderSectionArea(r, _level);
-  return A * widget.length * widget.connectedTankCount;
+        final t = widget.wallThickness;
+        final r = max(0.0, (widget.diameter - 2.0 * t) / 2.0);
+        final A = _horizontalCylinderSectionArea(r, _level.clamp(0.0, 2.0 * r));
+        final len = max(0.0, widget.length - 2.0 * t);
+        return A * len * widget.connectedTankCount;
       case TankType.rectangle:
-  return widget.length * widget.width * (_level) * widget.connectedTankCount;
+        final t = widget.wallThickness;
+        final l = max(0.0, widget.length - 2.0 * t);
+        final w = max(0.0, widget.width - 2.0 * t);
+        return l * w * (_level) * widget.connectedTankCount;
     }
   }
 
   // Very small expression evaluator for +,-,*,/,(), variables.
   // This is intentionally limited; for complex needs, consider adding a parser library.
   double _evalCustomFormulaLiters(String expr, {required double h, required double H, required double L, required double W, required double D, required double N}) {
-    final tokens = <String>[];
+    // 1) Strip whitespace
     String s = expr.replaceAll(RegExp(r"\s+"), '');
-    // Replace variables with numeric literals (safe digits and dot), keep operators and parentheses
-    s = s.replaceAllMapped(RegExp(r"\b[hHLDWN]\b"), (m) {
-      switch (m[0]) {
-        case 'h': return h.toString();
-        case 'H': return H.toString();
-        case 'L': return L.toString();
-        case 'W': return W.toString();
-        case 'D': return D.toString();
-        case 'N': return N.toString();
+  // 2) Tokenize into typed tokens using string kinds: 'num', 'op', 'l', 'r'
+  final rawTokens = <Map<String, String>>[];
+    int p = 0;
+    while (p < s.length) {
+      final ch = s[p];
+      // Parentheses
+      if (ch == '(') {
+        rawTokens.add({'t': 'l', 'v': ch});
+        p++;
+        continue;
       }
-      return '0';
-    });
-    // Tokenize numbers and operators
-    final re = RegExp(r"(\d+\.\d+|\d+|[+\-*/()])");
-    for (final m in re.allMatches(s)) {
-      tokens.add(m.group(0)!);
+      if (ch == ')') {
+        rawTokens.add({'t': 'r', 'v': ch});
+        p++;
+        continue;
+      }
+      // Operators
+      if ('+-*/'.contains(ch)) {
+        rawTokens.add({'t': 'op', 'v': ch});
+        p++;
+        continue;
+      }
+      // Variables (support full words and case-insensitive)
+      if (RegExp(r"[A-Za-z]").hasMatch(ch)) {
+        final start = p;
+        p++;
+        while (p < s.length && RegExp(r"[A-Za-z]").hasMatch(s[p])) {
+          p++;
+        }
+        final name = s.substring(start, p);
+        final n = name.toLowerCase();
+        double val;
+        if (n == 'h' || n == 'level' || n == 'lvl') {
+          val = h;
+        } else if (n == 'h' || n == 'height' || n == 'hgt') {
+          val = H;
+        } else if (n == 'l' || n == 'length' || n == 'len') {
+          val = L;
+        } else if (n == 'w' || n == 'width' || n == 'wid') {
+          val = W;
+        } else if (n == 'd' || n == 'diameter' || n == 'dia') {
+          val = D;
+        } else if (n == 'n' || n == 'count' || n == 'tanks') {
+          val = N;
+        } else if (name == 'H') { // preserve uppercase single-letter
+          val = H;
+        } else if (name == 'L') {
+          val = L;
+        } else if (name == 'W') {
+          val = W;
+        } else if (name == 'D') {
+          val = D;
+        } else if (name == 'N') {
+          val = N;
+        } else {
+          throw FormatException('Unknown variable: $name');
+        }
+        rawTokens.add({'t': 'num', 'v': val.toString()});
+        continue;
+      }
+      // Numbers (support leading dot and decimals)
+      if (RegExp(r"[0-9.]").hasMatch(ch)) {
+        final start = p;
+        p++;
+        while (p < s.length && RegExp(r"[0-9.]").hasMatch(s[p])) {
+          p++;
+        }
+        rawTokens.add({'t': 'num', 'v': s.substring(start, p)});
+        continue;
+      }
+      throw FormatException('Unknown character in formula: $ch');
     }
+    // 3) Insert implicit multiplication between [num|rparen] and [num|lparen]
+    final withMul = <Map<String, String>>[];
+    for (int i2 = 0; i2 < rawTokens.length; i2++) {
+      final cur = rawTokens[i2];
+      withMul.add(cur);
+      if (i2 + 1 < rawTokens.length) {
+        final next = rawTokens[i2 + 1];
+        final curIsNumOrR = cur['t'] == 'num' || cur['t'] == 'r';
+        final nextIsNumOrL = next['t'] == 'num' || next['t'] == 'l';
+        if (curIsNumOrR && nextIsNumOrL) {
+          withMul.add({'t': 'op', 'v': '*'});
+        }
+      }
+    }
+    // 4) Convert to simple string tokens for parser
+  final tokens = withMul.map<String>((m) => m['v'] as String).toList();
     int i = 0;
     late double Function() parseExpression;
     double parseFactor() {
@@ -1189,11 +1319,11 @@ class _MainTankPageState extends State<MainTankPage> {
             tooltip: 'Notification settings',
             icon: const Icon(Icons.notifications),
             onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
               try {
                 await _settingsChannel.invokeMethod('openAppNotificationSettings');
               } catch (e) {
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not open settings')));
+                messenger.showSnackBar(const SnackBar(content: Text('Could not open settings')));
               }
             },
           ),
@@ -1237,95 +1367,212 @@ class _MainTankPageState extends State<MainTankPage> {
       // Map connection status to UI
             // connection status used in AppBar cloud icon tooltip; no body UI here
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // Last update label (optional) and statistics (clamp text scale inside cards to avoid overflow)
-                MediaQuery(
-                  data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
-                  child: Column(
-                    children: [
-                      if (widget.displayTimeFromJson && _lastTimestamp != null) ...[
-                        Padding(
-                          padding: EdgeInsets.only(bottom: rowGap * 0.75),
-                          child: Align(
-                            alignment: Alignment.center,
-                            child: Text(
-                              'Last update: ${_formatTs(_lastTimestamp!)}',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.bodyMedium,
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
+            final isLandscape = constraints.maxWidth > constraints.maxHeight;
+
+            Widget statsAndControls() {
+              return SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Last update + first stats row
+                    MediaQuery(
+                      data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+                      child: Column(
+                        children: [
+                          if (widget.displayTimeFromJson && _lastTimestamp != null) ...[
+                            Padding(
+                              padding: EdgeInsets.only(bottom: rowGap * 0.75),
+                              child: Align(
+                                alignment: Alignment.center,
+                                child: Text(
+                                  'Last update: ${_formatTs(_lastTimestamp!)}',
+                                  textAlign: TextAlign.center,
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              ),
                             ),
+                          ],
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
+                            children: [
+                              _statCard('Liquid%', '${percent.toStringAsFixed(1)} %', minHeight: statH, dense: dense),
+                              _statCard('Level (m)', '${_level.toStringAsFixed(3)} m', minHeight: statH, dense: dense),
+                              _statCard('Empty (m)', (widget.height - _level).toStringAsFixed(3), minHeight: statH, dense: dense),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(height: rowGap),
+                    MediaQuery(
+                      data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          _statCard('Total L', '${(totalM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+                          _statCard('Liquid L', '${(liquidM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+                          _statCard('Empty L', '${(emptyM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+                        ],
+                      ),
+                    ),
+                    SizedBox(height: isLandscape ? rowGap : beforeTank),
+                    if (hasControl)
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            height: btnH,
+                            child: FilledButton(
+                              onPressed: _toggleOrSet,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: _isOn ? Colors.green : Colors.grey,
+                                foregroundColor: _isOn ? Colors.white : Colors.black87,
+                                minimumSize: Size(140 * scale, btnH),
+                              ),
+                              child: Text(_isOn ? 'ON' : 'OFF'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    if (hasControl) SizedBox(height: afterBtn),
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ProjectListPage()),
+                        );
+                      },
+                      child: const Text('Back to Projects'),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            if (!isLandscape) {
+              // Portrait: original vertical layout (stats -> tank -> controls)
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // Keep same as before but reuse statsAndControls without the tank
+                  MediaQuery(
+                    data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+                    child: Column(
+                      children: [
+                        if (widget.displayTimeFromJson && _lastTimestamp != null) ...[
+                          Padding(
+                            padding: EdgeInsets.only(bottom: rowGap * 0.75),
+                            child: Align(
+                              alignment: Alignment.center,
+                              child: Text(
+                                'Last update: ${_formatTs(_lastTimestamp!)}',
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context).textTheme.bodyMedium,
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
+                            ),
+                          ),
+                        ],
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: [
+                            _statCard('Liquid%', '${percent.toStringAsFixed(1)} %', minHeight: statH, dense: dense),
+                            _statCard('Level (m)', '${_level.toStringAsFixed(3)} m', minHeight: statH, dense: dense),
+                            _statCard('Empty (m)', (widget.height - _level).toStringAsFixed(3), minHeight: statH, dense: dense),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: rowGap),
+                  MediaQuery(
+                    data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _statCard('Total L', '${(totalM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+                        _statCard('Liquid L', '${(liquidM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+                        _statCard('Empty L', '${(emptyM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: beforeTank),
+                  Center(
+                    child: SizedBox(
+                      height: tankH,
+                      width: (tankH * 0.65).clamp(140.0, 200.0),
+                      child: TankWidget(
+                        tankType: widget.tankType,
+                        waterLevel: _level / widget.height,
+                        minThreshold: widget.minThreshold != null ? widget.minThreshold! / widget.height : null,
+                        maxThreshold: widget.maxThreshold != null ? widget.maxThreshold! / widget.height : null,
+                        volume: liquidM3 * 1000,
+                        percentage: percent,
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: afterTank),
+                  if (hasControl)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          height: btnH,
+                          child: FilledButton(
+                            onPressed: _toggleOrSet,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: _isOn ? Colors.green : Colors.grey,
+                              foregroundColor: _isOn ? Colors.white : Colors.black87,
+                              minimumSize: Size(140 * scale, btnH),
+                            ),
+                            child: Text(_isOn ? 'ON' : 'OFF'),
                           ),
                         ),
                       ],
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [
-              _statCard('Liquid%', '${percent.toStringAsFixed(1)} %', minHeight: statH, dense: dense),
-              _statCard('Level (m)', '${_level.toStringAsFixed(3)} m', minHeight: statH, dense: dense),
-              _statCard('Empty (m)', (widget.height - _level).toStringAsFixed(3), minHeight: statH, dense: dense),
-                        ],
+                    ),
+                  if (hasControl) SizedBox(height: afterBtn),
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ProjectListPage()),
+                      );
+                    },
+                    child: const Text('Back to Projects'),
+                  ),
+                ],
+              );
+            }
+
+            // Landscape: Row with tank on the left and widgets on the right
+            return Row(
+              children: [
+                // Left: Tank
+                Expanded(
+                  flex: 1,
+                  child: Center(
+                    child: SizedBox(
+                      height: tankH,
+                      width: (tankH * 0.8).clamp(160.0, 300.0),
+                      child: TankWidget(
+                        tankType: widget.tankType,
+                        waterLevel: _level / widget.height,
+                        minThreshold: widget.minThreshold != null ? widget.minThreshold! / widget.height : null,
+                        maxThreshold: widget.maxThreshold != null ? widget.maxThreshold! / widget.height : null,
+                        volume: liquidM3 * 1000,
+                        percentage: percent,
                       ),
-                    ],
-                  ),
-                ),
-                SizedBox(height: rowGap),
-                MediaQuery(
-                  data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-            _statCard('Total L', '${(totalM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
-            _statCard('Liquid L', '${(liquidM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
-            _statCard('Empty L', '${(emptyM3 * 1000).toStringAsFixed(2)} L', minHeight: statH, dense: dense),
-                    ],
-                  ),
-                ),
-                SizedBox(height: beforeTank),
-                Center(
-                  child: SizedBox(
-                    height: tankH,
-                    width: (tankH * 0.65).clamp(140.0, 200.0),
-                    child: TankWidget(
-                      tankType: widget.tankType,
-                      waterLevel: _level / widget.height,
-                      minThreshold: widget.minThreshold != null ? widget.minThreshold! / widget.height : null,
-                      maxThreshold: widget.maxThreshold != null ? widget.maxThreshold! / widget.height : null,
-                      volume: liquidM3 * 1000,
-                      percentage: percent,
                     ),
                   ),
                 ),
-                SizedBox(height: afterTank),
-                if (hasControl)
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      SizedBox(
-                        height: btnH,
-                        child: FilledButton(
-                          onPressed: _toggleOrSet,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: _isOn ? Colors.green : Colors.grey,
-                            foregroundColor: _isOn ? Colors.white : Colors.black87,
-                            minimumSize: Size(140 * scale, btnH),
-                          ),
-                          child: Text(_isOn ? 'ON' : 'OFF'),
-                        ),
-                      ),
-                    ],
-                  ),
-                if (hasControl) SizedBox(height: afterBtn),
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (_) => const ProjectListPage()),
-                    );
-                  },
-                  child: const Text('Back to Projects'),
+                const SizedBox(width: 12),
+                // Right: Stats & controls
+                Expanded(
+                  flex: 1,
+                  child: statsAndControls(),
                 ),
               ],
             );
@@ -1348,7 +1595,7 @@ class _LifecycleHook with WidgetsBindingObserver {
 // Scrolling title (marquee) for long project names in AppBar
 class _ScrollingTitle extends StatefulWidget {
   final String text;
-  const _ScrollingTitle({Key? key, required this.text}) : super(key: key);
+  const _ScrollingTitle({required this.text});
   @override
   State<_ScrollingTitle> createState() => _ScrollingTitleState();
 }

@@ -123,9 +123,9 @@ class TankPainter extends CustomPainter {
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: [
-          Colors.grey.shade300.withOpacity(0.85),
-          Colors.grey.shade600.withOpacity(0.9),
-          Colors.grey.shade400.withOpacity(0.85),
+          Colors.grey.shade300.withValues(alpha: 0.85),
+          Colors.grey.shade600.withValues(alpha: 0.9),
+          Colors.grey.shade400.withValues(alpha: 0.85),
         ],
         stops: const [0.0, 0.5, 1.0],
       ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
@@ -139,8 +139,8 @@ class TankPainter extends CustomPainter {
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [
-          const Color(0xFF5EC8FF).withOpacity(0.9),
-          const Color(0xFF0A6FDB).withOpacity(0.95),
+          const Color(0xFF5EC8FF).withValues(alpha: 0.9),
+          const Color(0xFF0A6FDB).withValues(alpha: 0.95),
         ],
       ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
 
@@ -174,7 +174,7 @@ class TankPainter extends CustomPainter {
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [Colors.white.withOpacity(0.25), Colors.transparent],
+  colors: [Colors.white.withValues(alpha: 0.25), Colors.transparent],
       ).createShader(Rect.fromLTWH(0, levelY - amp - 8, size.width, amp + 16));
     canvas.drawRect(Rect.fromLTWH(0, levelY - amp - 8, size.width, amp + 16), highlight);
 
@@ -260,7 +260,7 @@ class TankPainter extends CustomPainter {
 
   void _drawBubbles(Canvas canvas, Size size, Path clipPath) {
     final bubblePaint = Paint()
-      ..color = Colors.white.withOpacity(0.25)
+  ..color = Colors.white.withValues(alpha: 0.25)
       ..style = PaintingStyle.fill;
 
     final n = 8;

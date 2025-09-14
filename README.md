@@ -27,6 +27,30 @@ Each "Project" represents a tank (or set of connected identical tanks) defined b
 - Accurate horizontal cylinder segment area math
 - Supports multiple identical connected tanks by scaling volume
 
+### Custom Liters Formula (Advanced)
+- Optional user-defined formula to compute liters for heterogeneous connected tanks
+- Variables (meters unless noted):
+	- h (aka: level, lvl) – current measured liquid level (m)
+	- H (aka: height) – tank total height (m)
+	- L (aka: length, len) – tank length (m)
+	- W (aka: width, wid) – tank width (m)
+	- D (aka: diameter, dia) – tank diameter (m)
+	- N (aka: count, tanks) – number of connected tanks (unitless)
+- Operators: +, -, *, / and parentheses; implicit multiplication supported, e.g. 2(h+W) or (h)(W)
+- Behavior when enabled:
+	- Liquid liters = formula(h)
+	- Total liters = formula(H)
+	- Percent = liquid / total × 100
+- Built-in Test formula preview in the editor to validate with an example level (shows result or a clear error)
+- Examples:
+	- Rectangular tank(s): N*L*W*h*1000
+	- Vertical cylinder(s): N*3.14159*(D/2)*(D/2)*h*1000
+
+#### AI helper (offline only)
+- The app provides an offline helper that parses a short description and suggests a formula using variables (h,H,L,W,D,N). For mixed rectangular sizes, it prefers symbolic templates and may show an exact constant‑area alternative in the note.
+
+Online AI has been removed. The editor no longer shows an online AI toggle or prompts for keys.
+
 ### Project & Group Management
 - Create, rename, delete projects
 - Create named groups, drag & drop projects between groups
@@ -47,6 +71,7 @@ Each "Project" represents a tank (or set of connected identical tanks) defined b
 - Multi‑project QR encodes the group name so imports preserve original grouping
 - Import via camera scan or gallery image selection (decodes QR from file)
 - Conflict resolution dialog (replace / keep both / cancel)
+ - Includes custom formula settings so imports preserve your configuration
 
 ### Theming & UI
 - Light/Dark theme toggle

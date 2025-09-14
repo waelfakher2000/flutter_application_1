@@ -45,6 +45,7 @@ dependencies:
   url_launcher: ^6.3.0
   image_picker: ^1.0.7
   path_provider: ^2.1.4
+  flutter_secure_storage: ^9.2.2
   # permission_handler: ^10.4.0
   
   #test_api: ^0.7.7

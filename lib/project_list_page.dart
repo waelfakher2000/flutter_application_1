@@ -17,6 +17,9 @@ import 'mqtt_service.dart';
 import 'dart:math' as math;
 import 'dart:async';
 
+// Sorting applies to groups only per requirement
+enum SortMode { name, date, custom }
+
 class ProjectListPage extends StatefulWidget {
   const ProjectListPage({super.key});
 
@@ -29,29 +32,193 @@ class _ProjectListPageState extends State<ProjectListPage> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   bool _didAutoRefresh = false;
+  SortMode _sortMode = SortMode.custom;
+  // No explicit toggle; when in custom mode, groups can be long-pressed and dragged
 
   @override
   void initState() {
     super.initState();
     _applyOrAskForFullScreen();
   WidgetsBinding.instance.addPostFrameCallback((_) => _autoRefreshOnce());
+    _loadSortMode();
   }
 
   double _projectCapacityLiters(Project p) {
+    // Respect custom formula when enabled: evaluate liters at full inner height (h=H)
+    try {
+      if (p.useCustomFormula == true && (p.customFormula?.trim().isNotEmpty ?? false)) {
+        final t = p.wallThickness;
+        final H = math.max(0.0, (p.tankType == TankType.horizontalCylinder ? p.diameter : p.height) - 2 * t);
+        final L = math.max(0.0, p.length - 2 * t);
+        final W = math.max(0.0, p.width - 2 * t);
+        final D = math.max(0.0, p.diameter - 2 * t);
+        final liters = _evalCustomFormulaLitersLocal(
+          p.customFormula!,
+          h: H,
+          H: H,
+          L: L,
+          W: W,
+          D: D,
+          N: p.connectedTankCount.toDouble(),
+        );
+        return math.max(0.0, liters);
+      }
+    } catch (_) {
+      // Fall through to geometry if formula fails
+    }
+
+    // Geometry-based capacity (liters)
+    final t = p.wallThickness;
     switch (p.tankType) {
       case TankType.verticalCylinder:
-        final r = p.diameter / 2.0;
-        return 1000 * (3.141592653589793 * r * r * p.height) * p.connectedTankCount;
+        final r = math.max(0.0, (p.diameter - 2.0 * t) / 2.0);
+        final h = math.max(0.0, p.height - 2.0 * t);
+        return 1000 * (math.pi * r * r * h) * p.connectedTankCount;
       case TankType.horizontalCylinder:
-        final r = p.diameter / 2.0;
-        final full = 3.141592653589793 * r * r * p.length; // m^3
+        final r = math.max(0.0, (p.diameter - 2.0 * t) / 2.0);
+        final len = math.max(0.0, p.length - 2.0 * t);
+        final full = math.pi * r * r * len; // m^3
         return 1000 * full * p.connectedTankCount;
       case TankType.rectangle:
-        return 1000 * (p.length * p.width * p.height) * p.connectedTankCount;
+        final l = math.max(0.0, p.length - 2.0 * t);
+        final w = math.max(0.0, p.width - 2.0 * t);
+        final h = math.max(0.0, p.height - 2.0 * t);
+        return 1000 * (l * w * h) * p.connectedTankCount;
     }
   }
 
+  // Local copy of the formula evaluator used in MainTankPage, returning liters.
+  double _evalCustomFormulaLitersLocal(
+    String expr, {
+    required double h,
+    required double H,
+    required double L,
+    required double W,
+    required double D,
+    required double N,
+  }) {
+    String s = expr.replaceAll(RegExp(r"\s+"), '');
+    final rawTokens = <Map<String, String>>[];
+    int p = 0;
+    while (p < s.length) {
+      final ch = s[p];
+      if (ch == '(') {
+        rawTokens.add({'t': 'l', 'v': ch});
+        p++;
+        continue;
+      }
+      if (ch == ')') {
+        rawTokens.add({'t': 'r', 'v': ch});
+        p++;
+        continue;
+      }
+      if ('+-*/'.contains(ch)) {
+        rawTokens.add({'t': 'op', 'v': ch});
+        p++;
+        continue;
+      }
+      if (RegExp(r"[A-Za-z]").hasMatch(ch)) {
+        final start = p;
+        p++;
+        while (p < s.length && RegExp(r"[A-Za-z]").hasMatch(s[p])) {
+          p++;
+        }
+        final name = s.substring(start, p);
+        final n = name.toLowerCase();
+        double val;
+        if (n == 'h' || n == 'level' || n == 'lvl') {
+          val = h;
+        } else if (n == 'h' || n == 'height' || n == 'hgt') {
+          val = H;
+        } else if (n == 'l' || n == 'length' || n == 'len') {
+          val = L;
+        } else if (n == 'w' || n == 'width' || n == 'wid') {
+          val = W;
+        } else if (n == 'd' || n == 'diameter' || n == 'dia') {
+          val = D;
+        } else if (n == 'n' || n == 'count' || n == 'tanks') {
+          val = N;
+        } else if (name == 'H') {
+          val = H;
+        } else if (name == 'L') {
+          val = L;
+        } else if (name == 'W') {
+          val = W;
+        } else if (name == 'D') {
+          val = D;
+        } else if (name == 'N') {
+          val = N;
+        } else {
+          throw FormatException('Unknown variable: $name');
+        }
+        rawTokens.add({'t': 'num', 'v': val.toString()});
+        continue;
+      }
+      if (RegExp(r"[0-9.]").hasMatch(ch)) {
+        final start = p;
+        p++;
+        while (p < s.length && RegExp(r"[0-9.]").hasMatch(s[p])) {
+          p++;
+        }
+        rawTokens.add({'t': 'num', 'v': s.substring(start, p)});
+        continue;
+      }
+      throw FormatException('Unknown character in formula: $ch');
+    }
+    final withMul = <Map<String, String>>[];
+    for (int i2 = 0; i2 < rawTokens.length; i2++) {
+      final cur = rawTokens[i2];
+      withMul.add(cur);
+      if (i2 + 1 < rawTokens.length) {
+        final next = rawTokens[i2 + 1];
+        final curIsNumOrR = cur['t'] == 'num' || cur['t'] == 'r';
+        final nextIsNumOrL = next['t'] == 'num' || next['t'] == 'l';
+        if (curIsNumOrR && nextIsNumOrL) {
+          withMul.add({'t': 'op', 'v': '*'});
+        }
+      }
+    }
+    final tokens = withMul.map<String>((m) => m['v'] as String).toList();
+    int i = 0;
+    late double Function() parseExpression;
+    double parseFactor() {
+      if (i >= tokens.length) throw FormatException('Unexpected end');
+      final t = tokens[i++];
+      if (t == '(') {
+        final v = parseExpression();
+        if (i >= tokens.length || tokens[i] != ')') throw FormatException('Missing )');
+        i++;
+        return v;
+      }
+      if (t == '+') return parseFactor();
+      if (t == '-') return -parseFactor();
+      return double.parse(t);
+    }
+    double parseTerm() {
+      double x = parseFactor();
+      while (i < tokens.length && (tokens[i] == '*' || tokens[i] == '/')) {
+        final op = tokens[i++];
+        final y = parseFactor();
+        x = op == '*' ? x * y : x / y;
+      }
+      return x;
+    }
+    parseExpression = () {
+      double x = parseTerm();
+      while (i < tokens.length && (tokens[i] == '+' || tokens[i] == '-')) {
+        final op = tokens[i++];
+        final y = parseTerm();
+        x = op == '+' ? x + y : x - y;
+      }
+      return x;
+    };
+    final v = parseExpression();
+    if (i != tokens.length) throw FormatException('Unexpected token: ${tokens[i]}');
+    return v;
+  }
+
   Future<void> _applyOrAskForFullScreen() async {
+    final outerContext = context; // capture before await
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
 
@@ -66,18 +233,22 @@ class _ProjectListPageState extends State<ProjectListPage> {
       }
     } else {
       // It's the first time, so ask the user.
-      WidgetsBinding.instance.addPostFrameCallback((_) => _showFullScreenDialog());
+      if (!outerContext.mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!outerContext.mounted) return;
+        _showFullScreenDialog(outerContext);
+      });
     }
   }
 
-  Future<void> _showFullScreenDialog() async {
+  Future<void> _showFullScreenDialog(BuildContext outerContext) async {
     final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
+    if (!outerContext.mounted) return;
 
     return showDialog<void>(
-      context: context,
+      context: outerContext,
       barrierDismissible: false, // user must choose an option
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
           title: const Text('Full Screen Mode'),
           content: const SingleChildScrollView(
@@ -94,7 +265,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
                 SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
                 await prefs.setBool('fullscreen_preference_set', true);
                 await prefs.setBool('is_fullscreen', false);
-                if (mounted) Navigator.of(context).pop();
+                if (!outerContext.mounted) return;
+                Navigator.of(outerContext).pop();
               },
             ),
             TextButton(
@@ -103,7 +275,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
                 SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
                 await prefs.setBool('fullscreen_preference_set', true);
                 await prefs.setBool('is_fullscreen', true);
-                if (mounted) Navigator.of(context).pop();
+                if (!outerContext.mounted) return;
+                Navigator.of(outerContext).pop();
               },
             ),
           ],
@@ -116,6 +289,23 @@ class _ProjectListPageState extends State<ProjectListPage> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadSortMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final m = prefs.getString('project_sort_mode');
+    setState(() {
+      _sortMode = SortMode.values.firstWhere((e) => e.name == m, orElse: () => SortMode.custom);
+      // no-op
+    });
+  }
+
+  Future<void> _setSortMode(SortMode mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('project_sort_mode', mode.name);
+    setState(() {
+      _sortMode = mode;
+    });
   }
 
   // Legacy persistence removed; repository handles saving.
@@ -141,31 +331,86 @@ class _ProjectListPageState extends State<ProjectListPage> {
       void finish() {
         if (!completer.isCompleted) completer.complete();
       }
-      double _totalVolumeM3(Project pr) {
+      double totalVolumeM3(Project pr) {
+        // If using custom formula, evaluate liters at full inner height and convert to m^3
+        try {
+          if (pr.useCustomFormula == true && (pr.customFormula?.trim().isNotEmpty ?? false)) {
+            final t = pr.wallThickness;
+            final H = math.max(0.0, (pr.tankType == TankType.horizontalCylinder ? pr.diameter : pr.height) - 2 * t);
+            final L = math.max(0.0, pr.length - 2 * t);
+            final W = math.max(0.0, pr.width - 2 * t);
+            final D = math.max(0.0, pr.diameter - 2 * t);
+            final liters = _evalCustomFormulaLitersLocal(
+              pr.customFormula!,
+              h: H,
+              H: H,
+              L: L,
+              W: W,
+              D: D,
+              N: pr.connectedTankCount.toDouble(),
+            );
+            return math.max(0.0, liters) / 1000.0;
+          }
+        } catch (_) {}
+        final t = pr.wallThickness;
         switch (pr.tankType) {
           case TankType.verticalCylinder:
-            final r = pr.diameter / 2.0; return math.pi * r * r * pr.height * pr.connectedTankCount;
+            final r = math.max(0.0, (pr.diameter - 2.0 * t) / 2.0);
+            final h = math.max(0.0, pr.height - 2.0 * t);
+            return math.pi * r * r * h * pr.connectedTankCount;
           case TankType.horizontalCylinder:
-            final r = pr.diameter / 2.0; return math.pi * r * r * pr.length * pr.connectedTankCount;
+            final r = math.max(0.0, (pr.diameter - 2.0 * t) / 2.0);
+            final len = math.max(0.0, pr.length - 2.0 * t);
+            return math.pi * r * r * len * pr.connectedTankCount;
           case TankType.rectangle:
-            return pr.length * pr.width * pr.height * pr.connectedTankCount;
+            final l = math.max(0.0, pr.length - 2.0 * t);
+            final w = math.max(0.0, pr.width - 2.0 * t);
+            final h = math.max(0.0, pr.height - 2.0 * t);
+            return l * w * h * pr.connectedTankCount;
         }
       }
-      double _horizontalSegmentArea(double r, double h) {
+      double horizontalSegmentArea(double r, double h) {
         // h: filled height (0..2r)
         if (h <= 0) return 0; if (h >= 2*r) return math.pi * r * r;
         final part1 = r*r*math.acos((r - h)/r);
         final part2 = (r - h)*math.sqrt(2*r*h - h*h);
         return part1 - part2;
       }
-      double _liquidVolumeM3(Project pr, double level) {
+      double liquidVolumeM3(Project pr, double level) {
+        // If using custom formula, compute liters then convert to m^3
+        try {
+          if (pr.useCustomFormula == true && (pr.customFormula?.trim().isNotEmpty ?? false)) {
+            final t = pr.wallThickness;
+            final H = math.max(0.0, (pr.tankType == TankType.horizontalCylinder ? pr.diameter : pr.height) - 2 * t);
+            final L = math.max(0.0, pr.length - 2 * t);
+            final W = math.max(0.0, pr.width - 2 * t);
+            final D = math.max(0.0, pr.diameter - 2 * t);
+            final liters = _evalCustomFormulaLitersLocal(
+              pr.customFormula!,
+              h: level,
+              H: H,
+              L: L,
+              W: W,
+              D: D,
+              N: pr.connectedTankCount.toDouble(),
+            );
+            return math.max(0.0, liters) / 1000.0;
+          }
+        } catch (_) {}
+        final t = pr.wallThickness;
         switch (pr.tankType) {
           case TankType.verticalCylinder:
-            final r = pr.diameter / 2.0; return math.pi * r * r * level * pr.connectedTankCount;
+            final r = math.max(0.0, (pr.diameter - 2.0 * t) / 2.0);
+            return math.pi * r * r * level * pr.connectedTankCount;
           case TankType.horizontalCylinder:
-            final r = pr.diameter / 2.0; final area = _horizontalSegmentArea(r, level.clamp(0, 2*r)); return area * pr.length * pr.connectedTankCount;
+            final r = math.max(0.0, (pr.diameter - 2.0 * t) / 2.0);
+            final area = horizontalSegmentArea(r, level.clamp(0, 2*r));
+            final len = math.max(0.0, pr.length - 2.0 * t);
+            return area * len * pr.connectedTankCount;
           case TankType.rectangle:
-            return pr.length * pr.width * level * pr.connectedTankCount;
+            final l = math.max(0.0, pr.length - 2.0 * t);
+            final w = math.max(0.0, pr.width - 2.0 * t);
+            return l * w * level * pr.connectedTankCount;
         }
       }
       svc = MqttService(
@@ -188,17 +433,23 @@ class _ProjectListPageState extends State<ProjectListPage> {
           if (p.sensorType == SensorType.submersible) {
             level = corrected;
           } else {
-            level = p.height - corrected; // ultrasonic distance → level
+            // Use inner vertical dimension for ultrasonic sensors
+            final innerHeight = p.tankType == TankType.horizontalCylinder
+                ? math.max(0.0, p.diameter - 2.0 * p.wallThickness)
+                : math.max(0.0, p.height - 2.0 * p.wallThickness);
+            level = innerHeight - corrected; // ultrasonic distance → level
           }
             // Clamp level for safety
           if (p.tankType == TankType.horizontalCylinder) {
-            // vertical dimension is diameter
-            level = level.clamp(0.0, p.diameter);
+            // vertical dimension is inner diameter
+            final innerH = math.max(0.0, p.diameter - 2.0 * p.wallThickness);
+            level = level.clamp(0.0, innerH);
           } else {
-            level = level.clamp(0.0, p.height);
+            final innerH = math.max(0.0, p.height - 2.0 * p.wallThickness);
+            level = level.clamp(0.0, innerH);
           }
-          final totalM3 = _totalVolumeM3(p);
-          final liquidM3 = _liquidVolumeM3(p, level);
+          final totalM3 = totalVolumeM3(p);
+          final liquidM3 = liquidVolumeM3(p, level);
           repo.updateVolume(p.id, liquidM3 * 1000, totalM3 * 1000, DateTime.now());
           try { svc.disconnect(); } catch (_) {}
           timer?.cancel();
@@ -224,8 +475,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
       for (int i = 0; i < maxConcurrent && index < projects.length; i++, index++) {
         batch.add(fetch(projects[index]));
       }
-      await Future.wait(batch);
-      if (!mounted) break;
+  await Future.wait(batch);
+  if (!mounted) break;
     }
   }
 
@@ -233,6 +484,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
     final result = await Navigator.of(context).push(
       MaterialPageRoute(builder: (context) => const ScanQrPage()),
     );
+    if (!mounted) return;
     if (result is Project) {
       await _handleImport(result);
     } else if (result is List<Project>) {
@@ -289,7 +541,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
           ],
         ),
       );
-      if (!mounted || action == null || action == 'cancel') return;
+  if (!mounted || action == null || action == 'cancel') return;
       if (action == 'replace') {
         repo.updateProject(imported.copyWith(id: repo.projects[existingIndex].id));
       } else {
@@ -342,6 +594,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
     );
 
     if (newName == null || newName.isEmpty) return;
+      if (!mounted) return;
 
     // Duplicate by JSON round-trip, clearing id so constructor generates a new one
     final json = original.toJson()
@@ -356,6 +609,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
     final newProject = await Navigator.of(context).push<Project>(
       MaterialPageRoute(builder: (context) => const ProjectEditPage()),
     );
+    if (!mounted) return;
     if (newProject != null) {
       repo.addProject(newProject);
     }
@@ -379,7 +633,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
       ),
     );
     if (name == null || name.isEmpty) return;
-  context.read<ProjectRepository>().addGroup(ProjectGroup(name: name));
+    if (!mounted) return;
+    context.read<ProjectRepository>().addGroup(ProjectGroup(name: name));
   }
 
   Future<void> _renameGroup(ProjectGroup group) async {
@@ -400,7 +655,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
       ),
     );
     if (name == null || name.isEmpty) return;
-  context.read<ProjectRepository>().renameGroup(group.id, name);
+    if (!mounted) return;
+    context.read<ProjectRepository>().renameGroup(group.id, name);
   }
 
   Future<void> _deleteGroup(ProjectGroup group) async {
@@ -418,7 +674,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
           ],
         ),
       );
-      if (ok == true) repo.deleteGroup(group.id);
+  if (!mounted) return;
+  if (ok == true) repo.deleteGroup(group.id);
       return;
     }
 
@@ -434,6 +691,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
         ],
       ),
     );
+    if (!mounted) return;
     if (choice == 'keep') {
       repo.deleteGroup(group.id); // existing behavior ungrouping
     } else if (choice == 'delete') {
@@ -448,6 +706,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
     final updatedProject = await Navigator.of(context).push<Project>(
       MaterialPageRoute(builder: (context) => ProjectEditPage(project: repo.projects[index])),
     );
+    if (!mounted) return;
     if (updatedProject != null) repo.updateProject(updatedProject);
   }
 
@@ -489,6 +748,17 @@ class _ProjectListPageState extends State<ProjectListPage> {
           ),
         ),
         actions: [
+          PopupMenuButton<SortMode>(
+            tooltip: 'Sort projects',
+            initialValue: _sortMode,
+            onSelected: (m) => _setSortMode(m),
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: SortMode.name, child: Text('Sort by name')),
+              PopupMenuItem(value: SortMode.date, child: Text('Sort by date')),
+              PopupMenuItem(value: SortMode.custom, child: Text('Custom order')),
+            ],
+            icon: const Icon(Icons.sort),
+          ),
           IconButton(
             tooltip: 'Import from QR',
             icon: const Icon(Icons.qr_code_scanner),
@@ -520,12 +790,15 @@ class _ProjectListPageState extends State<ProjectListPage> {
     if (!repo.isLoaded) {
       return const Center(child: CircularProgressIndicator());
     }
-    final allProjects = repo.projects;
-    final groups = repo.groups;
+  final allProjects = repo.projects;
+  final groups = repo.groups.toList();
     final String q = _searchQuery.trim().toLowerCase();
-    final List<Project> filtered = q.isEmpty
+    List<Project> filtered = q.isEmpty
         ? allProjects
         : allProjects.where((p) => p.name.toLowerCase().contains(q) || p.broker.toLowerCase().contains(q)).toList();
+
+    // Sort projects inside groups only by current requirement? Actually requirement says sorting is at group level only.
+    // So we DO NOT sort individual projects; we only sort the order of group sections based on mode.
 
     if (allProjects.isEmpty) {
       return Center(
@@ -585,7 +858,15 @@ class _ProjectListPageState extends State<ProjectListPage> {
     // Order: groups, then ungrouped at the end
     final List<Widget> sections = [];
 
-  for (final g in groups) {
+  // Determine group display order
+    List<ProjectGroup> orderedGroups = groups;
+    if (_sortMode == SortMode.name) {
+      orderedGroups = groups.toList()..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    } else if (_sortMode == SortMode.date) {
+      orderedGroups = groups.toList()..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    } // custom uses repository order
+
+  for (final g in orderedGroups) {
       final items = grouped[g.id] ?? [];
       sections.add(_groupSection(title: g.name, group: g, projects: items));
     }
@@ -615,7 +896,38 @@ class _ProjectListPageState extends State<ProjectListPage> {
               ],
             ),
           ),
-          ...sections,
+          if (_sortMode == SortMode.custom)
+            ReorderableListView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              onReorder: (oldIndex, newIndex) {
+                if (newIndex > oldIndex) newIndex -= 1;
+                // Build current ordered id list excluding 'Ungrouped' pseudo section
+                final ids = [for (final g in orderedGroups) g.id];
+                final moved = ids.removeAt(oldIndex);
+                ids.insert(newIndex, moved);
+                context.read<ProjectRepository>().reorderGroups(ids);
+                setState(() {});
+              },
+              children: [
+                for (final g in orderedGroups)
+                  GestureDetector(
+                    key: ValueKey('grp_${g.id}'),
+                    onLongPress: () {
+                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Long-press and drag to reorder groups')),
+                      );
+                    },
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      child: _groupSection(title: g.name, group: g, projects: grouped[g.id] ?? []),
+                    ),
+                  ),
+              ],
+            )
+          else
+            ...sections,
           const SizedBox(height: 24),
         ],
       ),
@@ -776,7 +1088,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
                     ),
               children: projects.isEmpty
                   ? const [ListTile(title: Text('No projects'))]
-                  : projects.map((project) => _projectTile(project)).toList(),
+                  : projects.map((project) => _projectTile(project, draggable: true)).toList(),
             ),
           );
         },
@@ -784,7 +1096,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
     );
   }
 
-  Widget _projectTile(Project project) {
+  Widget _projectTile(Project project, {bool draggable = true}) {
     final repo = context.read<ProjectRepository>();
     final index = repo.projects.indexWhere((p) => p.id == project.id);
     final tile = ListTile(
@@ -803,6 +1115,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
               diameter: project.diameter,
               length: project.length,
               width: project.width,
+              wallThickness: project.wallThickness,
               username: project.username,
               password: project.password,
               minThreshold: project.minThreshold,
@@ -852,7 +1165,9 @@ class _ProjectListPageState extends State<ProjectListPage> {
         ],
       ),
     );
-
+    if (!draggable) {
+      return tile;
+    }
     return LongPressDraggable<Project>(
       data: project,
       feedback: Material(
@@ -872,4 +1187,6 @@ class _ProjectListPageState extends State<ProjectListPage> {
       child: tile,
     );
   }
+
+  // No per-project reordering; only groups are re-ordered.
 }

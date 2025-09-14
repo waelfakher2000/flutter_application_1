@@ -16,6 +16,8 @@ class Project {
   double diameter;
   double length;
   double width;
+  // Tank wall thickness (meters). Used to compute inner dimensions.
+  double wallThickness;
   double? minThreshold;
   double? maxThreshold;
   double multiplier;
@@ -49,6 +51,8 @@ class Project {
   double? lastLiquidLiters; // most recent filled volume in liters
   double? lastTotalLiters; // capacity liters (may vary if dimensions edited)
   DateTime? lastUpdated; // timestamp of lastLiquidLiters
+  // Creation timestamp for sorting by date
+  DateTime createdAt;
 
   Project({
     String? id,
@@ -63,7 +67,8 @@ class Project {
     required this.height,
     required this.diameter,
     required this.length,
-    required this.width,
+  required this.width,
+  this.wallThickness = 0.0,
     this.minThreshold,
     this.maxThreshold,
     this.multiplier = 1.0,
@@ -90,7 +95,8 @@ class Project {
   this.lastLiquidLiters,
   this.lastTotalLiters,
   this.lastUpdated,
-  }) : id = id ?? const Uuid().v4();
+    DateTime? createdAt,
+  }) : id = id ?? const Uuid().v4(), createdAt = createdAt ?? DateTime.now();
 
   Map<String, dynamic> toJson() {
     return {
@@ -107,6 +113,7 @@ class Project {
       'diameter': diameter,
       'length': length,
       'width': width,
+  'wallThickness': wallThickness,
       'minThreshold': minThreshold,
       'maxThreshold': maxThreshold,
       'multiplier': multiplier,
@@ -133,6 +140,7 @@ class Project {
   'lastLiquidLiters': lastLiquidLiters,
   'lastTotalLiters': lastTotalLiters,
   'lastUpdated': lastUpdated?.toIso8601String(),
+      'createdAt': createdAt.toIso8601String(),
     };
   }
 
@@ -150,7 +158,8 @@ class Project {
       height: json['height']?.toDouble() ?? 0.0,
       diameter: json['diameter']?.toDouble() ?? 0.0,
       length: json['length']?.toDouble() ?? 0.0,
-      width: json['width']?.toDouble() ?? 0.0,
+  width: json['width']?.toDouble() ?? 0.0,
+  wallThickness: json['wallThickness']?.toDouble() ?? 0.0,
       minThreshold: json['minThreshold']?.toDouble(),
       maxThreshold: json['maxThreshold']?.toDouble(),
       multiplier: json['multiplier']?.toDouble() ?? 1.0,
@@ -189,6 +198,9 @@ class Project {
   lastLiquidLiters: (json['lastLiquidLiters'] is num) ? (json['lastLiquidLiters'] as num).toDouble() : null,
   lastTotalLiters: (json['lastTotalLiters'] is num) ? (json['lastTotalLiters'] as num).toDouble() : null,
   lastUpdated: json['lastUpdated'] != null ? DateTime.tryParse(json['lastUpdated']) : null,
+  createdAt: json['createdAt'] != null
+      ? DateTime.tryParse(json['createdAt']) ?? DateTime.now()
+      : DateTime.now(),
     );
   }
 
@@ -217,6 +229,7 @@ class Project {
     double? diameter,
     double? length,
     double? width,
+  double? wallThickness,
     double? minThreshold,
     double? maxThreshold,
     double? multiplier,
@@ -243,6 +256,7 @@ class Project {
   double? lastLiquidLiters,
   double? lastTotalLiters,
   DateTime? lastUpdated,
+  DateTime? createdAt,
   }) {
     return Project(
       id: id ?? this.id,
@@ -257,7 +271,8 @@ class Project {
       height: height ?? this.height,
       diameter: diameter ?? this.diameter,
       length: length ?? this.length,
-      width: width ?? this.width,
+  width: width ?? this.width,
+  wallThickness: wallThickness ?? this.wallThickness,
       minThreshold: minThreshold ?? this.minThreshold,
       maxThreshold: maxThreshold ?? this.maxThreshold,
       multiplier: multiplier ?? this.multiplier,
@@ -284,6 +299,7 @@ class Project {
   lastLiquidLiters: lastLiquidLiters ?? this.lastLiquidLiters,
   lastTotalLiters: lastTotalLiters ?? this.lastTotalLiters,
   lastUpdated: lastUpdated ?? this.lastUpdated,
+  createdAt: createdAt ?? this.createdAt,
     );
   }
 }

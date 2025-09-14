@@ -1,0 +1,38 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "flutter_analyze",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"analyze"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$dart-json"
+			],
+			"group": "build"
+		},
+		{
+			"label": "flutter_analyze",
+			"type": "shell",
+			"command": "flutter analyze",
+			"isBackground": false,
+			"problemMatcher": [
+				"$dart-json"
+			],
+			"group": "build"
+		},
+		{
+			"label": "flutter_analyze",
+			"type": "shell",
+			"command": "flutter analyze",
+			"isBackground": false,
+			"problemMatcher": [
+				"$dart-json"
+			],
+			"group": "build"
+		}
+	]
+}
