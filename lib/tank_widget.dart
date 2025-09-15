@@ -86,6 +86,11 @@ class _TankWidgetState extends State<TankWidget> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    // Theme-aware scale colors (grey in light mode, light-grey in dark mode)
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color scaleColor = isDark ? Colors.grey.shade300 : Colors.grey.shade800;
+    final Color scaleMinorColor = isDark ? Colors.grey.shade500 : Colors.grey.shade600;
+    final Color labelColor = isDark ? Colors.grey.shade200 : Colors.grey.shade800;
     return CustomPaint(
       painter: TankPainter(
         tankType: widget.tankType,
@@ -100,6 +105,9 @@ class _TankWidgetState extends State<TankWidget> with TickerProviderStateMixin {
         majorTickMeters: widget.majorTickMeters,
         minorDivisions: widget.minorDivisions,
         fullHeightMeters: widget.fullHeightMeters,
+        scaleColor: scaleColor,
+        scaleMinorColor: scaleMinorColor,
+        labelColor: labelColor,
       ),
       child: const SizedBox.expand(),
     );
@@ -119,6 +127,9 @@ class TankPainter extends CustomPainter {
   final double majorTickMeters;
   final int minorDivisions;
   final double fullHeightMeters;
+  final Color scaleColor;
+  final Color scaleMinorColor;
+  final Color labelColor;
 
   TankPainter({
     required this.tankType,
@@ -133,6 +144,9 @@ class TankPainter extends CustomPainter {
     required this.majorTickMeters,
     required this.minorDivisions,
     required this.fullHeightMeters,
+    required this.scaleColor,
+    required this.scaleMinorColor,
+    required this.labelColor,
   });
 
   @override
@@ -305,10 +319,10 @@ class TankPainter extends CustomPainter {
   void _drawGraduation(Canvas canvas, Size size) {
     // Draw ticks and labels just outside the tank border
     final tickPaint = Paint()
-      ..color = Colors.white70
+      ..color = scaleColor
       ..strokeWidth = 2;
     final minorPaint = Paint()
-      ..color = Colors.white38
+      ..color = scaleMinorColor
       ..strokeWidth = 1;
 
     // Graduation spans full height with 0 at bottom and increasing upward
@@ -333,9 +347,9 @@ class TankPainter extends CustomPainter {
       final p2 = Offset(right ? x0 + 10 : x0 - 10, y);
       canvas.drawLine(p1, p2, tickPaint);
 
-      // Label in meters relative to full height; display as e.g. 0.3m, 0.5m
-  final meters = (v * (fullHeightMeters <= 0 ? 1.0 : fullHeightMeters)).clamp(0.0, double.infinity);
-  final text = TextSpan(text: '${meters.toStringAsFixed(2)}m', style: const TextStyle(color: Colors.white70, fontSize: 10));
+    // Label in meters relative to full height; display as e.g. 0.30m, 0.50m
+    final meters = (v * (fullHeightMeters <= 0 ? 1.0 : fullHeightMeters)).clamp(0.0, double.infinity);
+    final text = TextSpan(text: '${meters.toStringAsFixed(2)}m', style: TextStyle(color: labelColor, fontSize: 10));
       final tp = TextPainter(text: text, textDirection: TextDirection.ltr);
       tp.layout(minWidth: 0);
       final labelX = right ? p2.dx + labelDx : p2.dx - tp.width + labelDx;
@@ -353,6 +367,19 @@ class TankPainter extends CustomPainter {
         }
       }
     }
+
+    // Always draw the max (top) tick/label at 100% height
+    const double vTop = 1.0;
+    final yTop = size.height * (1 - vTop);
+    final pTop1 = Offset(x0, yTop);
+    final pTop2 = Offset(right ? x0 + 10 : x0 - 10, yTop);
+    canvas.drawLine(pTop1, pTop2, tickPaint);
+    final topMeters = (fullHeightMeters <= 0 ? 1.0 : fullHeightMeters);
+    final topText = TextSpan(text: '${topMeters.toStringAsFixed(2)}m', style: TextStyle(color: labelColor, fontSize: 10));
+    final topTp = TextPainter(text: topText, textDirection: TextDirection.ltr);
+    topTp.layout(minWidth: 0);
+    final topLabelX = right ? pTop2.dx + labelDx : pTop2.dx - topTp.width + labelDx;
+    topTp.paint(canvas, Offset(topLabelX, yTop - topTp.height / 2));
   }
 
   @override

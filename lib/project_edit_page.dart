@@ -1094,7 +1094,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                             Expanded(
                               child: DropdownButtonFormField<GraduationSide>(
                                 isExpanded: true,
-                                value: _graduationSide,
+                                initialValue: _graduationSide,
                                 decoration: dec('Graduation side', Icons.swap_horiz),
                                 items: const [
                                   DropdownMenuItem(value: GraduationSide.left, child: Text('Left')),
