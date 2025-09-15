@@ -71,6 +71,10 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   bool _autoControl = false;
   bool _controlRetained = false;
   MqttQosLevel _controlQos = MqttQosLevel.atLeastOnce;
+  // Graduation/scale config
+  GraduationSide _graduationSide = GraduationSide.left;
+  late TextEditingController _majorTickController; // meters per major tick
+  late TextEditingController _minorDivsController; // minor divisions between majors
 
   SensorType _sensorType = SensorType.submersible;
   TankType _tankType = TankType.verticalCylinder;
@@ -120,6 +124,10 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   _displayTimeFromJson = p?.displayTimeFromJson ?? false;
   _jsonTimeFieldIndexController = TextEditingController(text: (p?.jsonTimeFieldIndex ?? 1).toString());
   _jsonTimeKeyNameController = TextEditingController(text: p?.jsonTimeKeyName ?? '');
+  // Grad/scale
+  _graduationSide = p?.graduationSide ?? GraduationSide.left;
+  _majorTickController = TextEditingController(text: (p?.scaleMajorTickMeters ?? 0.1).toString());
+  _minorDivsController = TextEditingController(text: (p?.scaleMinorDivisions ?? 4).toString());
   }
 
   @override
@@ -151,6 +159,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   _jsonKeyNameController.dispose();
   _jsonTimeFieldIndexController.dispose();
   _jsonTimeKeyNameController.dispose();
+  _majorTickController.dispose();
+  _minorDivsController.dispose();
   // Online AI removed
     super.dispose();
   }
@@ -196,6 +206,9 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   autoControl: _autoControl,
   controlRetained: _controlRetained,
   controlQos: _controlQos,
+  graduationSide: _graduationSide,
+  scaleMajorTickMeters: double.tryParse(_majorTickController.text.trim())?.clamp(0.01, 1000.0) ?? 0.1,
+  scaleMinorDivisions: int.tryParse(_minorDivsController.text.trim())?.clamp(0, 10) ?? 4,
       );
       Navigator.of(context).pop(project);
     }
@@ -1069,6 +1082,52 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                             controller: _maxController,
                             decoration: dec('Max Threshold (m) (optional)', Icons.arrow_upward),
                             keyboardType: TextInputType.number,
+                          ),
+                          const SizedBox(height: 16),
+                          // Graduation/Scale configuration
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text('Graduation & Scale', style: Theme.of(context).textTheme.titleSmall),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(children: [
+                            Expanded(
+                              child: DropdownButtonFormField<GraduationSide>(
+                                isExpanded: true,
+                                value: _graduationSide,
+                                decoration: dec('Graduation side', Icons.swap_horiz),
+                                items: const [
+                                  DropdownMenuItem(value: GraduationSide.left, child: Text('Left')),
+                                  DropdownMenuItem(value: GraduationSide.right, child: Text('Right')),
+                                ],
+                                onChanged: (v) => setState(() => _graduationSide = v ?? GraduationSide.left),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: TextFormField(
+                                controller: _majorTickController,
+                                decoration: dec('Major tick (m)', Icons.stacked_line_chart, hint: 'e.g. 0.1'),
+                                keyboardType: TextInputType.number,
+                                validator: (v) {
+                                  final d = double.tryParse((v ?? '').trim());
+                                  if (d == null || d <= 0) return 'Enter > 0';
+                                  return null;
+                                },
+                              ),
+                            ),
+                          ]),
+                          const SizedBox(height: 8),
+                          TextFormField(
+                            controller: _minorDivsController,
+                            decoration: dec('Minor divisions between majors', Icons.grid_on, hint: '0 for none'),
+                            keyboardType: TextInputType.number,
+                            validator: (v) {
+                              final n = int.tryParse((v ?? '').trim());
+                              if (n == null || n < 0) return 'Enter 0 or more';
+                              if (n > 10) return 'Too many (<=10)';
+                              return null;
+                            },
                           ),
                         ],
                       ),

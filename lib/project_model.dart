@@ -53,6 +53,12 @@ class Project {
   DateTime? lastUpdated; // timestamp of lastLiquidLiters
   // Creation timestamp for sorting by date
   DateTime createdAt;
+  // Tank graduation/scale UI settings
+  GraduationSide graduationSide;
+  // Distance between major ticks in meters
+  double scaleMajorTickMeters;
+  // Number of minor divisions between majors (>=0)
+  int scaleMinorDivisions;
 
   Project({
     String? id,
@@ -96,6 +102,9 @@ class Project {
   this.lastTotalLiters,
   this.lastUpdated,
     DateTime? createdAt,
+    this.graduationSide = GraduationSide.left,
+    this.scaleMajorTickMeters = 0.1,
+    this.scaleMinorDivisions = 4,
   }) : id = id ?? const Uuid().v4(), createdAt = createdAt ?? DateTime.now();
 
   Map<String, dynamic> toJson() {
@@ -141,6 +150,9 @@ class Project {
   'lastTotalLiters': lastTotalLiters,
   'lastUpdated': lastUpdated?.toIso8601String(),
       'createdAt': createdAt.toIso8601String(),
+      'graduationSide': graduationSide.toString(),
+      'scaleMajorTickMeters': scaleMajorTickMeters,
+      'scaleMinorDivisions': scaleMinorDivisions,
     };
   }
 
@@ -201,6 +213,16 @@ class Project {
   createdAt: json['createdAt'] != null
       ? DateTime.tryParse(json['createdAt']) ?? DateTime.now()
       : DateTime.now(),
+      graduationSide: GraduationSide.values.firstWhere(
+        (e) => e.toString() == (json['graduationSide'] ?? GraduationSide.left.toString()),
+        orElse: () => GraduationSide.left,
+      ),
+      scaleMajorTickMeters: (json['scaleMajorTickMeters'] is num)
+          ? (json['scaleMajorTickMeters'] as num).toDouble()
+          : double.tryParse('${json['scaleMajorTickMeters'] ?? '0.1'}') ?? 0.1,
+      scaleMinorDivisions: (json['scaleMinorDivisions'] is int)
+          ? json['scaleMinorDivisions']
+          : int.tryParse('${json['scaleMinorDivisions'] ?? '4'}') ?? 4,
     );
   }
 
@@ -257,6 +279,9 @@ class Project {
   double? lastTotalLiters,
   DateTime? lastUpdated,
   DateTime? createdAt,
+  GraduationSide? graduationSide,
+  double? scaleMajorTickMeters,
+  int? scaleMinorDivisions,
   }) {
     return Project(
       id: id ?? this.id,
@@ -300,6 +325,9 @@ class Project {
   lastTotalLiters: lastTotalLiters ?? this.lastTotalLiters,
   lastUpdated: lastUpdated ?? this.lastUpdated,
   createdAt: createdAt ?? this.createdAt,
+      graduationSide: graduationSide ?? this.graduationSide,
+      scaleMajorTickMeters: scaleMajorTickMeters ?? this.scaleMajorTickMeters,
+      scaleMinorDivisions: scaleMinorDivisions ?? this.scaleMinorDivisions,
     );
   }
 }

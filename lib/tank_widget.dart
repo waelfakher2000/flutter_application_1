@@ -9,6 +9,10 @@ class TankWidget extends StatefulWidget {
   final double? maxThreshold; // 0.0 to 1.0
   final double volume;
   final double percentage;
+  final GraduationSide graduationSide;
+  final double majorTickMeters; // project units are meters
+  final int minorDivisions;
+  final double fullHeightMeters; // used for labeling ticks in meters
 
   const TankWidget({
     super.key,
@@ -18,6 +22,10 @@ class TankWidget extends StatefulWidget {
     this.maxThreshold,
     required this.volume,
     required this.percentage,
+    this.graduationSide = GraduationSide.left,
+    this.majorTickMeters = 0.1,
+    this.minorDivisions = 4,
+    this.fullHeightMeters = 1.0,
   });
 
   @override
@@ -88,6 +96,10 @@ class _TankWidgetState extends State<TankWidget> with TickerProviderStateMixin {
         volume: widget.volume,
   wavePhase: _waveController.value * 2 * math.pi,
   waveAmplitude: 0.03, // ~3% of tank height
+        graduationSide: widget.graduationSide,
+        majorTickMeters: widget.majorTickMeters,
+        minorDivisions: widget.minorDivisions,
+        fullHeightMeters: widget.fullHeightMeters,
       ),
       child: const SizedBox.expand(),
     );
@@ -103,6 +115,10 @@ class TankPainter extends CustomPainter {
   final double volume;
   final double wavePhase; // radians [0..2π)
   final double waveAmplitude; // fraction of height (e.g., 0.03)
+  final GraduationSide graduationSide;
+  final double majorTickMeters;
+  final int minorDivisions;
+  final double fullHeightMeters;
 
   TankPainter({
     required this.tankType,
@@ -113,6 +129,10 @@ class TankPainter extends CustomPainter {
     required this.volume,
   required this.wavePhase,
   required this.waveAmplitude,
+    required this.graduationSide,
+    required this.majorTickMeters,
+    required this.minorDivisions,
+    required this.fullHeightMeters,
   });
 
   @override
@@ -194,6 +214,9 @@ class TankPainter extends CustomPainter {
     // Draw text inside the tank
     _drawText(canvas, size, '${percentage.toStringAsFixed(1)}%', size.height / 2 - 20);
     _drawText(canvas, size, '${volume.toStringAsFixed(2)} L', size.height / 2 + 20);
+
+    // Draw graduation scale on chosen side
+    _drawGraduation(canvas, size);
   }
 
   void _drawText(Canvas canvas, Size size, String text, double y) {
@@ -276,6 +299,59 @@ class TankPainter extends CustomPainter {
   canvas.clipPath(clipPath);
   canvas.drawPath(bubble, bubblePaint);
   canvas.restore();
+    }
+  }
+
+  void _drawGraduation(Canvas canvas, Size size) {
+    // Draw ticks and labels just outside the tank border
+    final tickPaint = Paint()
+      ..color = Colors.white70
+      ..strokeWidth = 2;
+    final minorPaint = Paint()
+      ..color = Colors.white38
+      ..strokeWidth = 1;
+
+    // Graduation spans full height with 0 at bottom and increasing upward
+    // Compute pixel per meter based on the drawing height being 1.0 for waterLevel.
+    // Since TankWidget doesn't know absolute meters, we treat 1.0 = full height and map majorTickMeters relative to that.
+    // Caller should pass majorTickMeters normalized to full height when building this widget.
+
+    final double majorStep = majorTickMeters; // already normalized 0..1 of tank height
+    if (majorStep <= 0) return;
+    final int minor = minorDivisions.clamp(0, 10);
+
+    // Decide x position for ticks (left or right outside border)
+    final bool right = graduationSide == GraduationSide.right;
+    final double x0 = right ? size.width + 2 : -2;
+    final double labelDx = right ? 4 : -4; // offset for text away from ticks
+
+    // Draw baseline guide
+    // Draw major ticks and labels at 0, majorStep, 2*majorStep ... up to 1.0
+    for (double v = 0.0; v <= 1.0001; v += majorStep) {
+      final y = size.height * (1 - v);
+      final p1 = Offset(x0, y);
+      final p2 = Offset(right ? x0 + 10 : x0 - 10, y);
+      canvas.drawLine(p1, p2, tickPaint);
+
+      // Label in meters relative to full height; display as e.g. 0.3m, 0.5m
+  final meters = (v * (fullHeightMeters <= 0 ? 1.0 : fullHeightMeters)).clamp(0.0, double.infinity);
+  final text = TextSpan(text: '${meters.toStringAsFixed(2)}m', style: const TextStyle(color: Colors.white70, fontSize: 10));
+      final tp = TextPainter(text: text, textDirection: TextDirection.ltr);
+      tp.layout(minWidth: 0);
+      final labelX = right ? p2.dx + labelDx : p2.dx - tp.width + labelDx;
+      tp.paint(canvas, Offset(labelX, y - tp.height / 2));
+
+      // Minor ticks between v and v+majorStep
+      if (minor > 0 && v + majorStep <= 1.0 + 1e-6) {
+        final double dv = majorStep / (minor + 1);
+        for (int i = 1; i <= minor; i++) {
+          final vm = v + dv * i;
+          final ym = size.height * (1 - vm);
+          final q1 = Offset(x0, ym);
+          final q2 = Offset(right ? x0 + 6 : x0 - 6, ym);
+          canvas.drawLine(q1, q2, minorPaint);
+        }
+      }
     }
   }
 

@@ -1142,6 +1142,9 @@ class _ProjectListPageState extends State<ProjectListPage> {
               displayTimeFromJson: project.displayTimeFromJson,
               jsonTimeFieldIndex: project.jsonTimeFieldIndex,
               jsonTimeKeyName: project.jsonTimeKeyName,
+              graduationSide: project.graduationSide,
+              scaleMajorTickMeters: project.scaleMajorTickMeters,
+              scaleMinorDivisions: project.scaleMinorDivisions,
             ),
           ),
         );

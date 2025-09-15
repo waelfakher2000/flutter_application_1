@@ -636,6 +636,10 @@ class MainTankPage extends StatefulWidget {
   final bool displayTimeFromJson;
   final int jsonTimeFieldIndex;
   final String? jsonTimeKeyName;
+  // UI: graduation scale configuration
+  final GraduationSide graduationSide;
+  final double scaleMajorTickMeters;
+  final int scaleMinorDivisions;
   const MainTankPage({
     super.key,
     required this.broker,
@@ -674,6 +678,9 @@ class MainTankPage extends StatefulWidget {
   this.jsonTimeKeyName,
   this.useCustomFormula = false,
   this.customFormula,
+  this.graduationSide = GraduationSide.left,
+  this.scaleMajorTickMeters = 0.1,
+  this.scaleMinorDivisions = 4,
   });
 
   @override
@@ -1517,6 +1524,10 @@ class _MainTankPageState extends State<MainTankPage> {
                         maxThreshold: widget.maxThreshold != null ? widget.maxThreshold! / widget.height : null,
                         volume: liquidM3 * 1000,
                         percentage: percent,
+                        graduationSide: widget.graduationSide,
+                        majorTickMeters: (widget.scaleMajorTickMeters > 0 ? widget.scaleMajorTickMeters : 0.1) / (widget.height <= 0 ? 1.0 : widget.height),
+                        minorDivisions: widget.scaleMinorDivisions,
+                        fullHeightMeters: widget.height,
                       ),
                     ),
                   ),
@@ -1570,6 +1581,10 @@ class _MainTankPageState extends State<MainTankPage> {
                         maxThreshold: widget.maxThreshold != null ? widget.maxThreshold! / widget.height : null,
                         volume: liquidM3 * 1000,
                         percentage: percent,
+                        graduationSide: widget.graduationSide,
+                        majorTickMeters: (widget.scaleMajorTickMeters > 0 ? widget.scaleMajorTickMeters : 0.1) / (widget.height <= 0 ? 1.0 : widget.height),
+                        minorDivisions: widget.scaleMinorDivisions,
+                        fullHeightMeters: widget.height,
                       ),
                     ),
                   ),
