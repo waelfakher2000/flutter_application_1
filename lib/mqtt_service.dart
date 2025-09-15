@@ -93,7 +93,8 @@ class MqttService {
       debugPrint('MQTT(Native): host=$broker port=$port');
     }
 
-    client.keepAlivePeriod = 20;
+  // Keep-alive period (seconds): increase a bit to reduce needless pings on slow links
+  client.keepAlivePeriod = 30;
     client.onDisconnected = _onDisconnected;
     client.onConnected = _onConnected;
   }
@@ -301,7 +302,10 @@ class MqttService {
   }
 
   void _onDisconnected() {
-    onStatus('Disconnected');
+    // Debounce: some brokers briefly disconnect during restarts; avoid immediate red status flicker
+    Future.delayed(const Duration(milliseconds: 200), () {
+      onStatus('Disconnected');
+    });
     _isConnecting = false;
     _scheduleReconnect();
   }

@@ -45,7 +45,7 @@ class _ShareQrPageState extends State<ShareQrPage> {
 
   Future<void> _shareText() async {
     final label = widget.projects != null ? 'Multiple projects (${widget.projects!.length})' : 'Project ${widget.project!.name}';
-    await Share.share('IoT Monitoring share: $label\n$payload');
+  await Share.share('Liquid Level Monitoring share: $label\n$payload');
   }
 
   Future<void> _shareQrImage() async {
@@ -59,7 +59,7 @@ class _ShareQrPageState extends State<ShareQrPage> {
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/share_qr.png');
       await file.writeAsBytes(pngBytes);
-      await Share.shareXFiles([XFile(file.path)], text: 'Scan to import into IoT Monitoring');
+  await Share.shareXFiles([XFile(file.path)], text: 'Scan to import into Liquid Level Monitoring');
     } catch (_) {}
   }
 

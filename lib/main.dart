@@ -77,7 +77,7 @@ class TankApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
     return MaterialApp(
-      title: 'IoT Monitoring',
+      title: 'Liquid Level Monitoring',
       theme: ThemeData(
         brightness: Brightness.light,
         primarySwatch: Colors.blue,
@@ -681,6 +681,9 @@ class MainTankPage extends StatefulWidget {
 }
 
 class _MainTankPageState extends State<MainTankPage> {
+  // Consider data stale if no message has arrived within this window while connected.
+  // Increase if your sensors publish infrequently.
+  static const int _staleThresholdSeconds = 60;
   static const MethodChannel _settingsChannel = MethodChannel('app.settings.channel');
   static const MethodChannel _serviceChannel = MethodChannel('app.mqtt.service');
   late MqttService _mqttService;
@@ -734,6 +737,7 @@ class _MainTankPageState extends State<MainTankPage> {
   void _handleLifecycle(AppLifecycleState state) {
     if (!mounted) return;
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      // Intentionally pause without showing a red disconnect state in the UI
       _mqttService.disconnect();
       setState(() { _connectionStatus = 'Paused'; });
     } else if (state == AppLifecycleState.resumed) {
@@ -747,9 +751,11 @@ class _MainTankPageState extends State<MainTankPage> {
     _staleTimer?.cancel();
     _staleTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!mounted) return;
-      if (_connectionStatus.toLowerCase().contains('connected') && _lastMessageAt != null) {
+      final s = _connectionStatus.toLowerCase();
+      final looksConnected = s.contains('connected') || s.contains('subscribed');
+      if (looksConnected && _lastMessageAt != null) {
         final age = DateTime.now().difference(_lastMessageAt!);
-        if (age.inSeconds > 20) {
+        if (age.inSeconds > _staleThresholdSeconds) {
           setState(() { _connectionStatus = 'Stale'; });
         }
       }
@@ -1303,12 +1309,12 @@ class _MainTankPageState extends State<MainTankPage> {
               child: Icon(
                 _connectionStatus.toLowerCase().contains('connected') || _connectionStatus.toLowerCase().contains('subscribed')
                     ? Icons.cloud_done
-                    : _connectionStatus.toLowerCase().contains('connecting')
+                    : (_connectionStatus.toLowerCase().contains('connecting') || _connectionStatus.toLowerCase().contains('stale'))
                         ? Icons.cloud_queue
                         : Icons.cloud_off,
                 color: _connectionStatus.toLowerCase().contains('connected') || _connectionStatus.toLowerCase().contains('subscribed')
                     ? Colors.green
-                    : _connectionStatus.toLowerCase().contains('connecting')
+                    : (_connectionStatus.toLowerCase().contains('connecting') || _connectionStatus.toLowerCase().contains('stale'))
                         ? Colors.amber
                         : Colors.red,
                 size: 20,

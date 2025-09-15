@@ -910,18 +910,17 @@ class _ProjectListPageState extends State<ProjectListPage> {
                 setState(() {});
               },
               children: [
-                for (final g in orderedGroups)
-                  GestureDetector(
-                    key: ValueKey('grp_${g.id}'),
-                    onLongPress: () {
-                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Long-press and drag to reorder groups')),
-                      );
-                    },
+                for (int i = 0; i < orderedGroups.length; i++)
+                  ReorderableDelayedDragStartListener(
+                    key: ValueKey('grp_${orderedGroups[i].id}'),
+                    index: i,
                     child: Container(
                       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      child: _groupSection(title: g.name, group: g, projects: grouped[g.id] ?? []),
+                      child: _groupSection(
+                        title: orderedGroups[i].name,
+                        group: orderedGroups[i],
+                        projects: grouped[orderedGroups[i].id] ?? [],
+                      ),
                     ),
                   ),
               ],

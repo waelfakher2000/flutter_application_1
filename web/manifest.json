@@ -1,6 +1,6 @@
 {
-    "name": "IoT Monitoring",
-    "short_name": "IoT Monitoring",
+    "name": "Liquid Level Monitoring",
+    "short_name": "Liquid Level Monitoring",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

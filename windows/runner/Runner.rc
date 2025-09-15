@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "IoT Monitoring" "\0"
+            VALUE "FileDescription", "Liquid Level Monitoring" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "IoT Monitoring" "\0"
+            VALUE "InternalName", "Liquid Level Monitoring" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "IoT Monitoring.exe" "\0"
-            VALUE "ProductName", "IoT Monitoring" "\0"
+            VALUE "OriginalFilename", "Liquid Level Monitoring.exe" "\0"
+            VALUE "ProductName", "Liquid Level Monitoring" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
