@@ -1,11 +1,16 @@
 // main.dart
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:http/http.dart' as http;
+// Removed backend bridge HTTP and UUID usage
 import 'tank_widget.dart';
 import 'theme_provider.dart';
 import 'project_repository.dart';
@@ -14,7 +19,9 @@ import 'mqtt_service.dart';
 import 'landing_page.dart';
 import 'project_list_page.dart';
 import 'project_model.dart';
+// Removed history page (backend dependent)
 import 'package:mqtt_client/mqtt_client.dart' as mqtt;
+import 'global_mqtt.dart';
 
 // Local notifications plugin instance
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
@@ -32,6 +39,16 @@ Future<void> initializeLocalNotifications() async {
     // Don’t crash in release if notification init fails (e.g., missing resource)
     debugPrint('Local notifications init error: $e');
   }
+}
+
+/// Handle background/terminated FCM messages
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  final data = message.data;
+  final title = message.notification?.title ?? data['title'] ?? 'Background Notification';
+  final body = message.notification?.body ?? data['body'] ?? (data.isNotEmpty ? data.toString() : '');
+  await showLocalNotification(title: title, body: body);
 }
 
 Future<void> showLocalNotification({
@@ -57,21 +74,123 @@ Future<void> showLocalNotification({
   );
 }
 
+// Optional backend URL for automatic device token registration
+// Prefer passing at runtime: --dart-define=BACKEND_URL=https://your-backend.onrender.com
+const String kBackendUrl = String.fromEnvironment('BACKEND_URL');
+
+Future<String?> _resolveBackendUrl() async {
+  // Priority: dart-define > stored preference
+  if (kBackendUrl.isNotEmpty) return kBackendUrl;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getString('backend_url');
+    if (v != null && v.isNotEmpty) return v;
+  } catch (_) {}
+  return null;
+}
+
+Future<void> _registerFcmToken(String token, {String? projectId}) async {
+  try {
+    final base = await _resolveBackendUrl();
+    if (base == null || base.isEmpty) {
+      debugPrint('Skipping device registration: BACKEND_URL not configured');
+      return;
+    }
+    final uri = Uri.parse(base.endsWith('/') ? '${base}register-device' : '$base/register-device');
+    final resp = await http.post(
+      uri,
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'token': token,
+        // When null, backend treats as global registration (all projects)
+        'projectId': projectId,
+      }),
+    );
+    if (resp.statusCode >= 200 && resp.statusCode < 300) {
+      debugPrint('FCM token registered with backend');
+    } else {
+      debugPrint('Device registration failed: ${resp.statusCode} ${resp.body}');
+    }
+  } catch (e) {
+    debugPrint('Device registration error: $e');
+  }
+}
+
 // Feature flag: set to true to start the native Android foreground service.
 // Set to false to disable native service startup (useful for debugging crashes).
 const bool enableNativeForegroundService = false;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeLocalNotifications();
+  await Firebase.initializeApp();
   runApp(MultiProvider(providers: [
     ChangeNotifierProvider(create: (_) => ThemeProvider()),
     ChangeNotifierProvider(create: (_) => ProjectRepository()..load()),
   ], child: const TankApp()));
 }
 
-class TankApp extends StatelessWidget {
+Future<void> _requestNotificationPermissions() async {
+  FirebaseMessaging messaging = FirebaseMessaging.instance;
+  await messaging.requestPermission(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
+}
+// Listen for foreground FCM messages
+void setupFCMForegroundListener() {
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    final data = message.data;
+    final title = message.notification?.title ?? data['title'] ?? 'Notification';
+    final body = message.notification?.body ?? data['body'] ?? (data.isNotEmpty ? data.toString() : '');
+    showLocalNotification(title: title, body: body);
+  });
+}
+
+
+class TankApp extends StatefulWidget {
   const TankApp({super.key});
+
+  @override
+  State<TankApp> createState() => _TankAppState();
+}
+
+class _TankAppState extends State<TankApp> {
+  @override
+  void initState() {
+    super.initState();
+    _initializeAsync();
+  }
+
+  Future<void> _initializeAsync() async {
+    await initializeLocalNotifications();
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    // Don't block startup on the permission dialog
+    Future.microtask(() async {
+      try {
+        await _requestNotificationPermissions();
+      } catch (e) {
+        debugPrint('Notification permission request failed: $e');
+      }
+    });
+    setupFCMForegroundListener();
+
+    // Helpful for testing: log FCM token and handle refresh
+    try {
+      final token = await FirebaseMessaging.instance.getToken();
+      debugPrint('FCM token: ${token ?? 'null'}');
+      if (token != null) {
+        // Auto-register token with backend if configured
+        unawaited(_registerFcmToken(token));
+      }
+      FirebaseMessaging.instance.onTokenRefresh.listen((t) async {
+        debugPrint('FCM token refreshed: $t');
+        unawaited(_registerFcmToken(t));
+      });
+    } catch (e) {
+      debugPrint('Failed to get FCM token: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -102,8 +221,6 @@ class DebugPage extends StatefulWidget {
 }
 
 class _DebugPageState extends State<DebugPage> {
-  String _bridgeUrl = '';
-  final _bridgeController = TextEditingController();
   final MethodChannel _ch = const MethodChannel('app.settings.channel');
 
   @override
@@ -114,20 +231,12 @@ class _DebugPageState extends State<DebugPage> {
 
   @override
   void dispose() {
-    _bridgeController.dispose();
     super.dispose();
   }
 
   Future<void> _refresh() async {
-    // Only load saved bridge URL in local-only mode
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final saved = prefs.getString('bridgeUrl') ?? '';
-      setState(() {
-        _bridgeUrl = saved;
-        if (saved.isNotEmpty) _bridgeController.text = saved;
-      });
-    } catch (_) {}
+    // No backend settings to load anymore
+    try {} catch (_) {}
   }
 
   Future<void> _openSettings() async {
@@ -179,7 +288,9 @@ class _DebugPageState extends State<DebugPage> {
               child: Padding(
                 padding: const EdgeInsets.all(12),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Firebase removed; app uses local notifications only', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  Text('Notifications', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  const Text('Foreground: local notifications. Background/closed: via backend bridge + FCM (when configured).'),
                   const SizedBox(height: 8),
                   Row(children: [
                     ElevatedButton(onPressed: _refresh, child: const Text('Refresh')),
@@ -190,40 +301,7 @@ class _DebugPageState extends State<DebugPage> {
               ),
             ),
             const SizedBox(height: 12),
-            Card(
-              elevation: 1,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Bridge URL', style: const TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  Text('Current: ${_bridgeUrl.isEmpty ? '(not set - emulator default used)' : _bridgeUrl}'),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _bridgeController,
-                    decoration: const InputDecoration(labelText: 'Bridge URL (https://...)'),
-                    keyboardType: TextInputType.url,
-                  ),
-                  const SizedBox(height: 8),
-                  Row(children: [
-                    ElevatedButton(onPressed: () async {
-                      final v = _bridgeController.text.trim();
-                      final prefs = await SharedPreferences.getInstance();
-                      await prefs.setString('bridgeUrl', v);
-                      if (!mounted) return;
-                      setState(() { _bridgeUrl = v; });
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bridge URL saved')));
-                    }, child: const Text('Save')),
-                    const SizedBox(width: 8),
-                    ElevatedButton(onPressed: () async {
-                      // Bridge/FCM removed — inform user to use local notifications only
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bridge/FCM disabled — local notifications only')));
-                    }, child: const Text('Register Now (disabled)')),
-                  ])
-                ]),
-              ),
-            ),
+            // Backend bridge removed from app; no Bridge URL panel
             const SizedBox(height: 12),
             Row(children: [
               ElevatedButton(onPressed: _openSettings, child: const Text('Open App Notification Settings')),
@@ -246,11 +324,11 @@ class MqttTopicPage extends StatefulWidget {
 }
 
 class _MqttTopicPageState extends State<MqttTopicPage> {
-  final _brokerController = TextEditingController(text: 'test.mosquitto.org');
+  final _brokerController = TextEditingController(text: 'mqttapi.mautoiot.com');
   final _portController = TextEditingController(text: '1883');
   final _topicController = TextEditingController(text: 'tank/level');
-  final _usernameController = TextEditingController();
-  final _passwordController = TextEditingController();
+  final _usernameController = TextEditingController(text: 'user');
+  final _passwordController = TextEditingController(text: '123456');
   final bool _connecting = false;
 
   void _submit() {
@@ -347,7 +425,7 @@ class _MqttTopicPageState extends State<MqttTopicPage> {
                       onPressed: _connecting ? null : _submit,
                       child: const Text('Submit & Next')),
                   const SizedBox(height: 12),
-                  const Text('Default broker is test.mosquitto.org:1883 (public test broker)'),
+                  const Text('Default broker is mqttapi.mautoiot.com:1883 (username: user, password: 123456)'),
                 ],
               ),
             ),
@@ -640,6 +718,8 @@ class MainTankPage extends StatefulWidget {
   final GraduationSide graduationSide;
   final double scaleMajorTickMeters;
   final int scaleMinorDivisions;
+  // History: when true, readings are posted to backend for charts
+  final bool storeHistory;
   const MainTankPage({
     super.key,
     required this.broker,
@@ -681,6 +761,7 @@ class MainTankPage extends StatefulWidget {
   this.graduationSide = GraduationSide.left,
   this.scaleMajorTickMeters = 0.1,
   this.scaleMinorDivisions = 4,
+  this.storeHistory = false,
   });
 
   @override
@@ -693,7 +774,7 @@ class _MainTankPageState extends State<MainTankPage> {
   static const int _staleThresholdSeconds = 60;
   static const MethodChannel _settingsChannel = MethodChannel('app.settings.channel');
   static const MethodChannel _serviceChannel = MethodChannel('app.mqtt.service');
-  late MqttService _mqttService;
+  MqttService? _mqttService;
   double? _lastNotifiedHigh;
   double? _lastNotifiedLow;
 
@@ -707,49 +788,61 @@ class _MainTankPageState extends State<MainTankPage> {
   Timer? _staleTimer;
   late final _LifecycleHook _lifecycleHook;
   // presence handled via _connectionStatus cloud icon
+  // History/graph reads from backend only; app no longer posts to backend.
 
   @override
   void initState() {
     super.initState();
   _lifecycleHook = _LifecycleHook(onChange: _handleLifecycle);
   WidgetsBinding.instance.addObserver(_lifecycleHook);
-    _mqttService = MqttService(
-      widget.broker,
-      widget.port,
-      widget.topic,
-  publishTopic: widget.controlTopic,
-  lastWillTopic: widget.lastWillTopic,
-  payloadIsJson: widget.payloadIsJson,
-  jsonFieldIndex: widget.jsonFieldIndex,
-  jsonKeyName: widget.jsonKeyName,
-  displayTimeFromJson: widget.displayTimeFromJson,
-  jsonTimeFieldIndex: widget.jsonTimeFieldIndex,
-  jsonTimeKeyName: widget.jsonTimeKeyName,
-      username: widget.username,
-      password: widget.password,
-      onMessage: _onMessage,
-      onStatus: _onStatus,
-  onPresence: _onPresence,
-  onTimestamp: _onTimestamp,
-    );
-    _mqttService.connect();
+    _initMqttService();
     // start native foreground service for notifications when app closed
     if (enableNativeForegroundService) {
       _startNativeService();
     }
     debugPrint('Skipping bridge registration in MainTankPage.initState (local notifications only)');
     _startStaleMonitor();
+    // No backend registration or writes from the app. Backend/firmware handles storage.
+  }
+
+  Future<void> _initMqttService() async {
+    final s = await getGlobalMqttSettings();
+    // Build service using global settings for broker/port/auth, keep per-project topic and parsing
+    final svc = MqttService(
+      s.broker,
+      s.port,
+      widget.topic,
+      publishTopic: widget.controlTopic,
+      lastWillTopic: widget.lastWillTopic,
+      payloadIsJson: widget.payloadIsJson,
+      jsonFieldIndex: widget.jsonFieldIndex,
+      jsonKeyName: widget.jsonKeyName,
+      displayTimeFromJson: widget.displayTimeFromJson,
+      jsonTimeFieldIndex: widget.jsonTimeFieldIndex,
+      jsonTimeKeyName: widget.jsonTimeKeyName,
+      username: s.username,
+      password: s.password,
+      onMessage: _onMessage,
+      onStatus: _onStatus,
+      onPresence: _onPresence,
+      onTimestamp: _onTimestamp,
+    );
+    if (!mounted) return;
+    setState(() => _mqttService = svc);
+    _mqttService?.connect();
   }
 
   void _handleLifecycle(AppLifecycleState state) {
     if (!mounted) return;
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       // Intentionally pause without showing a red disconnect state in the UI
-      _mqttService.disconnect();
+      if (_mqttService != null) {
+        _mqttService!.disconnect();
+      }
       setState(() { _connectionStatus = 'Paused'; });
     } else if (state == AppLifecycleState.resumed) {
       // Force a reconnect sequence
-      _mqttService.connect();
+      _mqttService?.connect();
       setState(() { if (!_connectionStatus.toLowerCase().contains('connecting')) _connectionStatus = 'Reconnecting'; });
     }
   }
@@ -792,7 +885,7 @@ class _MainTankPageState extends State<MainTankPage> {
   }
 
   Future<void> _publishControl(String value) async {
-    await _mqttService.publishJson(
+    await _mqttService?.publishJson(
       value,
       toTopic: widget.controlTopic,
       qos: _mapQos(widget.controlQos),
@@ -827,7 +920,9 @@ class _MainTankPageState extends State<MainTankPage> {
   @override
   void dispose() {
   WidgetsBinding.instance.removeObserver(_lifecycleHook);
-  _mqttService.disconnect();
+  if (_mqttService != null) {
+    _mqttService!.disconnect();
+  }
     _heartbeatTimer?.cancel();
   _staleTimer?.cancel();
     super.dispose();
@@ -900,13 +995,14 @@ class _MainTankPageState extends State<MainTankPage> {
       _lastMessageAt = DateTime.now();
     });
 
-    // Update repository cached volumes if projectId provided
+    // Update local repository cached volumes if projectId provided
     if (widget.projectId != null) {
       try {
         final repo = context.read<ProjectRepository>();
         final totalM3 = _totalVolumeM3();
         final liquidM3 = _liquidVolumeM3();
   repo.updateVolume(widget.projectId!, liquidM3 * 1000, totalM3 * 1000, DateTime.now());
+        // Do not write readings to backend from app; storage handled by firmware/backend bridge.
       } catch (_) {}
     } else {
       // Fallback to legacy persistence for older routes without id
@@ -967,6 +1063,8 @@ class _MainTankPageState extends State<MainTankPage> {
       }
     }
   }
+
+  // No _postReading: app does not write to backend. Graph screen fetches from backend for history.
 
   Future<void> _persistLatestVolumes() async {
     try {
@@ -1328,18 +1426,7 @@ class _MainTankPageState extends State<MainTankPage> {
               ),
             ),
           ),
-          IconButton(
-            tooltip: 'Notification settings',
-            icon: const Icon(Icons.notifications),
-            onPressed: () async {
-              final messenger = ScaffoldMessenger.of(context);
-              try {
-                await _settingsChannel.invokeMethod('openAppNotificationSettings');
-              } catch (e) {
-                messenger.showSnackBar(const SnackBar(content: Text('Could not open settings')));
-              }
-            },
-          ),
+          // Removed bell icon per request
         ],
       ),
       body: Padding(
@@ -1517,7 +1604,9 @@ class _MainTankPageState extends State<MainTankPage> {
                     child: SizedBox(
                       height: tankH,
                       width: (tankH * 0.65).clamp(140.0, 200.0),
-                      child: TankWidget(
+                      child: GestureDetector(
+                        onTap: () {},
+                        child: TankWidget(
                         tankType: widget.tankType,
                         waterLevel: _level / widget.height,
                         minThreshold: widget.minThreshold != null ? widget.minThreshold! / widget.height : null,
@@ -1528,6 +1617,11 @@ class _MainTankPageState extends State<MainTankPage> {
                         majorTickMeters: (widget.scaleMajorTickMeters > 0 ? widget.scaleMajorTickMeters : 0.1) / (widget.height <= 0 ? 1.0 : widget.height),
                         minorDivisions: widget.scaleMinorDivisions,
                         fullHeightMeters: widget.height,
+                        capacityLiters: _totalVolumeM3() * 1000,
+            innerCylinderDiameterMeters: widget.tankType == TankType.horizontalCylinder
+              ? max(0.0, widget.diameter - 2.0 * widget.wallThickness)
+              : null,
+                        ),
                       ),
                     ),
                   ),
@@ -1574,7 +1668,9 @@ class _MainTankPageState extends State<MainTankPage> {
                     child: SizedBox(
                       height: tankH,
                       width: (tankH * 0.8).clamp(160.0, 300.0),
-                      child: TankWidget(
+                      child: GestureDetector(
+                        onTap: () {},
+                        child: TankWidget(
                         tankType: widget.tankType,
                         waterLevel: _level / widget.height,
                         minThreshold: widget.minThreshold != null ? widget.minThreshold! / widget.height : null,
@@ -1585,6 +1681,11 @@ class _MainTankPageState extends State<MainTankPage> {
                         majorTickMeters: (widget.scaleMajorTickMeters > 0 ? widget.scaleMajorTickMeters : 0.1) / (widget.height <= 0 ? 1.0 : widget.height),
                         minorDivisions: widget.scaleMinorDivisions,
                         fullHeightMeters: widget.height,
+                        capacityLiters: _totalVolumeM3() * 1000,
+            innerCylinderDiameterMeters: widget.tankType == TankType.horizontalCylinder
+              ? max(0.0, widget.diameter - 2.0 * widget.wallThickness)
+              : null,
+                        ),
                       ),
                     ),
                   ),

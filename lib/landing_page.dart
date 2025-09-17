@@ -32,13 +32,19 @@ class _LandingPageState extends State<LandingPage> with SingleTickerProviderStat
 
     _controller.forward();
 
-    _navigateToNextScreen();
+    // Start navigation after first frame to ensure Navigator is ready
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      debugPrint('[LandingPage] Starting 3s timer to navigate...');
+      _navigateToNextScreen();
+    });
   }
 
   Future<void> _navigateToNextScreen() async {
     await Future.delayed(const Duration(seconds: 3)); // Total time for landing page
+    debugPrint('[LandingPage] Timer finished. mounted=$mounted');
 
     if (mounted) {
+      debugPrint('[LandingPage] Navigating to ProjectListPage');
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (context) => const ProjectListPage()),
       );

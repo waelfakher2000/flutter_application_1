@@ -33,6 +33,98 @@
 				"$dart-json"
 			],
 			"group": "build"
+		},
+		{
+			"label": "flutter_pub_get",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"pub",
+				"get"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$flutter"
+			],
+			"group": "build"
+		},
+		{
+			"label": "flutter_analyze_once",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"analyze"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$flutter"
+			],
+			"group": "build"
+		},
+		{
+			"label": "flutter_analyze_once",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"analyze"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$dart-build_runner"
+			],
+			"group": "build"
+		},
+		{
+			"label": "flutter_analyze_once",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"analyze"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$dart-build_runner"
+			],
+			"group": "build"
+		},
+		{
+			"label": "flutter_analyze_once",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"analyze"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$dart-build_runner"
+			],
+			"group": "build"
+		},
+		{
+			"label": "flutter_analyze_once",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"analyze"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$dart-build_runner"
+			],
+			"group": "build"
+		},
+		{
+			"label": "flutter_analyze_once",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"analyze"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$dart-build_runner"
+			],
+			"group": "build"
 		}
 	]
 }

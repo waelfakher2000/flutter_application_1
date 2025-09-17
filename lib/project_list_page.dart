@@ -14,8 +14,10 @@ import 'types.dart';
 import 'project_repository.dart';
 import 'widgets/scrolling_text.dart';
 import 'mqtt_service.dart';
+import 'global_mqtt.dart';
 import 'dart:math' as math;
 import 'dart:async';
+import 'global_mqtt_settings_page.dart';
 
 // Sorting applies to groups only per requirement
 enum SortMode { name, date, custom }
@@ -413,9 +415,10 @@ class _ProjectListPageState extends State<ProjectListPage> {
             return l * w * level * pr.connectedTankCount;
         }
       }
+      final global = await getGlobalMqttSettings();
       svc = MqttService(
-        p.broker,
-        p.port,
+        global.broker,
+        global.port,
         p.topic,
         publishTopic: null,
         lastWillTopic: p.lastWillTopic,
@@ -425,8 +428,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
         displayTimeFromJson: p.displayTimeFromJson,
         jsonTimeFieldIndex: p.jsonTimeFieldIndex,
         jsonTimeKeyName: p.jsonTimeKeyName,
-        username: p.username,
-        password: p.password,
+        username: global.username,
+        password: global.password,
         onMessage: (raw) {
           final corrected = raw * p.multiplier + p.offset;
           double level;
@@ -748,6 +751,18 @@ class _ProjectListPageState extends State<ProjectListPage> {
           ),
         ),
         actions: [
+          IconButton(
+            tooltip: 'MQTT Settings (global)',
+            icon: const Icon(Icons.settings_ethernet),
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const GlobalMqttSettingsPage()),
+              );
+              // After returning, optionally refresh preview values
+              if (!mounted) return;
+              await _refreshLiveVolumes();
+            },
+          ),
           PopupMenuButton<SortMode>(
             tooltip: 'Sort projects',
             initialValue: _sortMode,
@@ -1099,14 +1114,14 @@ class _ProjectListPageState extends State<ProjectListPage> {
     final repo = context.read<ProjectRepository>();
     final index = repo.projects.indexWhere((p) => p.id == project.id);
     final tile = ListTile(
-      title: Text(project.name),
-      subtitle: Text(project.broker),
+  title: Text(project.name),
+  subtitle: const Text('Uses global MQTT settings'),
       onTap: () {
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (context) => MainTankPage(
-              broker: project.broker,
-              port: project.port,
+              broker: project.broker, // no longer used, kept for constructor compatibility
+              port: project.port,     // no longer used, kept for constructor compatibility
               topic: project.topic,
               sensorType: project.sensorType,
               tankType: project.tankType,
@@ -1115,8 +1130,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
               length: project.length,
               width: project.width,
               wallThickness: project.wallThickness,
-              username: project.username,
-              password: project.password,
+              username: project.username, // legacy, ignored in service init
+              password: project.password, // legacy, ignored in service init
               minThreshold: project.minThreshold,
               maxThreshold: project.maxThreshold,
               projectName: project.name,
@@ -1145,6 +1160,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
               graduationSide: project.graduationSide,
               scaleMajorTickMeters: project.scaleMajorTickMeters,
               scaleMinorDivisions: project.scaleMinorDivisions,
+              storeHistory: project.storeHistory,
             ),
           ),
         );

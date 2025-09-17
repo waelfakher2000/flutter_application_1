@@ -6,6 +6,8 @@ plugins {
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    // Apply Google Services plugin for Firebase configuration
+    id("com.google.gms.google-services")
 }
 
 
@@ -34,8 +36,8 @@ android {
     }
 
     defaultConfig {
-        // Use a unique Application ID for distribution (independent of namespace)
-        applicationId = "com.wael.liquidlevel"
+        // Application ID must match google-services.json during build
+        applicationId = "com.example.flutter_application_1"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

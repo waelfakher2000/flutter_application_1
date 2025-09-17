@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:flutter_application_1/types.dart';
-import 'package:uuid/uuid.dart';
+// Removed uuid dependency related to backend ids
 
 class Project {
   String id;
@@ -59,6 +59,8 @@ class Project {
   double scaleMajorTickMeters;
   // Number of minor divisions between majors (>=0)
   int scaleMinorDivisions;
+  // History: whether to store readings to DB via backend
+  bool storeHistory;
 
   Project({
     String? id,
@@ -105,7 +107,8 @@ class Project {
     this.graduationSide = GraduationSide.left,
     this.scaleMajorTickMeters = 0.1,
     this.scaleMinorDivisions = 4,
-  }) : id = id ?? const Uuid().v4(), createdAt = createdAt ?? DateTime.now();
+    this.storeHistory = false,
+  }) : id = id ?? DateTime.now().millisecondsSinceEpoch.toString(), createdAt = createdAt ?? DateTime.now();
 
   Map<String, dynamic> toJson() {
     return {
@@ -153,6 +156,7 @@ class Project {
       'graduationSide': graduationSide.toString(),
       'scaleMajorTickMeters': scaleMajorTickMeters,
       'scaleMinorDivisions': scaleMinorDivisions,
+      'storeHistory': storeHistory,
     };
   }
 
@@ -223,6 +227,7 @@ class Project {
       scaleMinorDivisions: (json['scaleMinorDivisions'] is int)
           ? json['scaleMinorDivisions']
           : int.tryParse('${json['scaleMinorDivisions'] ?? '4'}') ?? 4,
+  storeHistory: json['storeHistory'] == true,
     );
   }
 
@@ -282,6 +287,7 @@ class Project {
   GraduationSide? graduationSide,
   double? scaleMajorTickMeters,
   int? scaleMinorDivisions,
+  bool? storeHistory,
   }) {
     return Project(
       id: id ?? this.id,
@@ -328,6 +334,7 @@ class Project {
       graduationSide: graduationSide ?? this.graduationSide,
       scaleMajorTickMeters: scaleMajorTickMeters ?? this.scaleMajorTickMeters,
       scaleMinorDivisions: scaleMinorDivisions ?? this.scaleMinorDivisions,
+      storeHistory: storeHistory ?? this.storeHistory,
     );
   }
 }

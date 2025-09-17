@@ -1,4 +1,31 @@
-# Miscellaneous
+# Node
+**/node_modules/
+**/.package-lock.json
+
+# Secrets
+**/service-account.json
+.env
+api/.env
+functions/.env
+
+# Flutter/Dart build artifacts
+.dart_tool/
+.packages
+**/build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.idea/
+.vscode/
+
+# Platform specifics
+android/local.properties
+ios/Flutter/Flutter.podspec
+ios/Pods/
+macos/Pods/
+
+# OS files
+.DS_Store
+Thumbs.db# Miscellaneous
 *.class
 *.log
 *.pyc

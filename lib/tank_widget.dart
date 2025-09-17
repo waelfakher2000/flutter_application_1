@@ -13,6 +13,9 @@ class TankWidget extends StatefulWidget {
   final double majorTickMeters; // project units are meters
   final int minorDivisions;
   final double fullHeightMeters; // used for labeling ticks in meters
+  // For horizontal cylinder graduation (non-linear volume mapping)
+  final double? capacityLiters; // total capacity used for labeling volume ticks
+  final double? innerCylinderDiameterMeters; // inner diameter for circular segment math
 
   const TankWidget({
     super.key,
@@ -26,6 +29,8 @@ class TankWidget extends StatefulWidget {
     this.majorTickMeters = 0.1,
     this.minorDivisions = 4,
     this.fullHeightMeters = 1.0,
+    this.capacityLiters,
+    this.innerCylinderDiameterMeters,
   });
 
   @override
@@ -105,6 +110,8 @@ class _TankWidgetState extends State<TankWidget> with TickerProviderStateMixin {
         majorTickMeters: widget.majorTickMeters,
         minorDivisions: widget.minorDivisions,
         fullHeightMeters: widget.fullHeightMeters,
+        capacityLiters: widget.capacityLiters,
+        innerCylinderDiameterMeters: widget.innerCylinderDiameterMeters,
         scaleColor: scaleColor,
         scaleMinorColor: scaleMinorColor,
         labelColor: labelColor,
@@ -130,6 +137,8 @@ class TankPainter extends CustomPainter {
   final Color scaleColor;
   final Color scaleMinorColor;
   final Color labelColor;
+  final double? capacityLiters;
+  final double? innerCylinderDiameterMeters;
 
   TankPainter({
     required this.tankType,
@@ -144,6 +153,8 @@ class TankPainter extends CustomPainter {
     required this.majorTickMeters,
     required this.minorDivisions,
     required this.fullHeightMeters,
+    this.capacityLiters,
+    this.innerCylinderDiameterMeters,
     required this.scaleColor,
     required this.scaleMinorColor,
     required this.labelColor,
@@ -330,8 +341,8 @@ class TankPainter extends CustomPainter {
     // Since TankWidget doesn't know absolute meters, we treat 1.0 = full height and map majorTickMeters relative to that.
     // Caller should pass majorTickMeters normalized to full height when building this widget.
 
-    final double majorStep = majorTickMeters; // already normalized 0..1 of tank height
-    if (majorStep <= 0) return;
+  final double majorStep = majorTickMeters; // normalized 0..1
+  if (majorStep <= 0) return;
     final int minor = minorDivisions.clamp(0, 10);
 
     // Decide x position for ticks (left or right outside border)
@@ -339,47 +350,126 @@ class TankPainter extends CustomPainter {
     final double x0 = right ? size.width + 2 : -2;
     final double labelDx = right ? 4 : -4; // offset for text away from ticks
 
-    // Draw baseline guide
-    // Draw major ticks and labels at 0, majorStep, 2*majorStep ... up to 1.0
-    for (double v = 0.0; v <= 1.0001; v += majorStep) {
-      final y = size.height * (1 - v);
-      final p1 = Offset(x0, y);
-      final p2 = Offset(right ? x0 + 10 : x0 - 10, y);
-      canvas.drawLine(p1, p2, tickPaint);
+    // Helper to map height fraction (0=bottom..1=top) to canvas Y, aligned with visible tank bounds
+    double yFromFrac(double f) {
+      f = f.clamp(0.0, 1.0);
+      if (tankType == TankType.horizontalCylinder) {
+        final top = size.height * 0.2;
+        final bottom = size.height * 0.8;
+        return bottom - f * (bottom - top);
+      }
+      return size.height * (1 - f);
+    }
 
-    // Label in meters relative to full height; display as e.g. 0.30m, 0.50m
-    final meters = (v * (fullHeightMeters <= 0 ? 1.0 : fullHeightMeters)).clamp(0.0, double.infinity);
+    // Horizontal cylinder: ticks at equal volume fractions, not equal heights
+    if (tankType == TankType.horizontalCylinder && (innerCylinderDiameterMeters ?? 0) > 0) {
+      final D = innerCylinderDiameterMeters!;
+      final r = D / 2.0;
+
+      // Helper: map volume fraction (0..1) to height fraction (0..1) by inverting segment area
+      double heightFracForVolFrac(double f) {
+        f = f.clamp(0.0, 1.0);
+        if (f <= 0) return 0.0;
+        if (f >= 1) return 1.0;
+        // Binary search h in [0, 2r] such that A(h)/(pi r^2) ~= f
+        double lo = 0.0, hi = 2.0 * r;
+        for (int it = 0; it < 30; it++) {
+          final mid = 0.5 * (lo + hi);
+          final a = _cylSegmentArea(r, mid) / (math.pi * r * r);
+          if (a < f) {
+            lo = mid;
+          } else {
+            hi = mid;
+          }
+        }
+        final h = 0.5 * (lo + hi);
+        return (h / (2.0 * r)).clamp(0.0, 1.0);
+      }
+
+      for (double frac = 0.0; frac <= 1.0001; frac += majorStep) {
+        final vf = frac.clamp(0.0, 1.0);
+        final hf = heightFracForVolFrac(vf);
+        final y = yFromFrac(hf);
+        final p1 = Offset(x0, y);
+        final p2 = Offset(right ? x0 + 10 : x0 - 10, y);
+        canvas.drawLine(p1, p2, tickPaint);
+
+    // Label height (meters) at this tick
+    final effectiveH = (innerCylinderDiameterMeters ?? fullHeightMeters);
+    final meters = (hf * (effectiveH <= 0 ? 1.0 : effectiveH)).clamp(0.0, double.infinity);
     final text = TextSpan(text: '${meters.toStringAsFixed(2)}m', style: TextStyle(color: labelColor, fontSize: 10));
-      final tp = TextPainter(text: text, textDirection: TextDirection.ltr);
-      tp.layout(minWidth: 0);
-      final labelX = right ? p2.dx + labelDx : p2.dx - tp.width + labelDx;
-      tp.paint(canvas, Offset(labelX, y - tp.height / 2));
+        final tp = TextPainter(text: text, textDirection: TextDirection.ltr);
+        tp.layout(minWidth: 0);
+        final labelX = right ? p2.dx + labelDx : p2.dx - tp.width + labelDx;
+        tp.paint(canvas, Offset(labelX, y - tp.height / 2));
 
-      // Minor ticks between v and v+majorStep
-      if (minor > 0 && v + majorStep <= 1.0 + 1e-6) {
-        final double dv = majorStep / (minor + 1);
-        for (int i = 1; i <= minor; i++) {
-          final vm = v + dv * i;
-          final ym = size.height * (1 - vm);
-          final q1 = Offset(x0, ym);
-          final q2 = Offset(right ? x0 + 6 : x0 - 6, ym);
-          canvas.drawLine(q1, q2, minorPaint);
+        if (minor > 0 && frac + majorStep <= 1.0 + 1e-6) {
+          final double df = majorStep / (minor + 1);
+          for (int i = 1; i <= minor; i++) {
+            final ff = (frac + df * i).clamp(0.0, 1.0);
+            final hfm = heightFracForVolFrac(ff);
+            final ym = yFromFrac(hfm);
+            final q1 = Offset(x0, ym);
+            final q2 = Offset(right ? x0 + 6 : x0 - 6, ym);
+            canvas.drawLine(q1, q2, minorPaint);
+          }
+        }
+      }
+    } else {
+      // Default (rectangle, vertical cylinder): equal height steps labeled in meters
+      for (double v = 0.0; v <= 1.0001; v += majorStep) {
+        final y = yFromFrac(v);
+        final p1 = Offset(x0, y);
+        final p2 = Offset(right ? x0 + 10 : x0 - 10, y);
+        canvas.drawLine(p1, p2, tickPaint);
+
+        final meters = (v * (fullHeightMeters <= 0 ? 1.0 : fullHeightMeters)).clamp(0.0, double.infinity);
+        final text = TextSpan(text: '${meters.toStringAsFixed(2)}m', style: TextStyle(color: labelColor, fontSize: 10));
+        final tp = TextPainter(text: text, textDirection: TextDirection.ltr);
+        tp.layout(minWidth: 0);
+        final labelX = right ? p2.dx + labelDx : p2.dx - tp.width + labelDx;
+        tp.paint(canvas, Offset(labelX, y - tp.height / 2));
+
+        if (minor > 0 && v + majorStep <= 1.0 + 1e-6) {
+          final double dv = majorStep / (minor + 1);
+          for (int i = 1; i <= minor; i++) {
+            final vm = v + dv * i;
+            final ym = yFromFrac(vm);
+            final q1 = Offset(x0, ym);
+            final q2 = Offset(right ? x0 + 6 : x0 - 6, ym);
+            canvas.drawLine(q1, q2, minorPaint);
+          }
         }
       }
     }
 
     // Always draw the max (top) tick/label at 100% height
-    const double vTop = 1.0;
-    final yTop = size.height * (1 - vTop);
+  const double vTop = 1.0;
+  final yTop = yFromFrac(vTop);
     final pTop1 = Offset(x0, yTop);
     final pTop2 = Offset(right ? x0 + 10 : x0 - 10, yTop);
     canvas.drawLine(pTop1, pTop2, tickPaint);
-    final topMeters = (fullHeightMeters <= 0 ? 1.0 : fullHeightMeters);
-    final topText = TextSpan(text: '${topMeters.toStringAsFixed(2)}m', style: TextStyle(color: labelColor, fontSize: 10));
-    final topTp = TextPainter(text: topText, textDirection: TextDirection.ltr);
+    TextSpan topTextSpan;
+    if (tankType == TankType.horizontalCylinder && (innerCylinderDiameterMeters ?? 0) > 0) {
+      final effectiveH = (innerCylinderDiameterMeters ?? fullHeightMeters);
+      final topMeters = (effectiveH <= 0 ? 1.0 : effectiveH);
+      topTextSpan = TextSpan(text: '${topMeters.toStringAsFixed(2)}m', style: TextStyle(color: labelColor, fontSize: 10));
+    } else {
+      final topMeters = (fullHeightMeters <= 0 ? 1.0 : fullHeightMeters);
+      topTextSpan = TextSpan(text: '${topMeters.toStringAsFixed(2)}m', style: TextStyle(color: labelColor, fontSize: 10));
+    }
+    final topTp = TextPainter(text: topTextSpan, textDirection: TextDirection.ltr);
     topTp.layout(minWidth: 0);
     final topLabelX = right ? pTop2.dx + labelDx : pTop2.dx - topTp.width + labelDx;
     topTp.paint(canvas, Offset(topLabelX, yTop - topTp.height / 2));
+  }
+
+  // Circular segment area for a horizontal cylinder cross-section filled to depth h (0..2r)
+  double _cylSegmentArea(double r, double h) {
+    if (h <= 0) return 0.0;
+    if (h >= 2 * r) return math.pi * r * r;
+    final a = r * r * math.acos((r - h) / r) - (r - h) * math.sqrt(2 * r * h - h * h);
+    return a;
   }
 
   @override

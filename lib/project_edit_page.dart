@@ -75,6 +75,8 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   GraduationSide _graduationSide = GraduationSide.left;
   late TextEditingController _majorTickController; // meters per major tick
   late TextEditingController _minorDivsController; // minor divisions between majors
+  // History toggle
+  bool _storeHistory = false;
 
   SensorType _sensorType = SensorType.submersible;
   TankType _tankType = TankType.verticalCylinder;
@@ -83,12 +85,12 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   void initState() {
     super.initState();
     final p = widget.project;
-    _nameController = TextEditingController(text: p?.name ?? 'New Project');
-    _brokerController = TextEditingController(text: p?.broker ?? 'test.mosquitto.org');
-    _portController = TextEditingController(text: p?.port.toString() ?? '1883');
-    _topicController = TextEditingController(text: p?.topic ?? 'tank/level');
-    _usernameController = TextEditingController(text: p?.username);
-    _passwordController = TextEditingController(text: p?.password);
+  _nameController = TextEditingController(text: p?.name ?? 'New Project');
+  _brokerController = TextEditingController(text: p?.broker ?? 'mqttapi.mautoiot.com');
+  _portController = TextEditingController(text: p != null ? p.port.toString() : '1883');
+  _topicController = TextEditingController(text: p?.topic ?? 'tank/level');
+  _usernameController = TextEditingController(text: p?.username ?? 'user');
+  _passwordController = TextEditingController(text: p?.password ?? '123456');
     _sensorType = p?.sensorType ?? SensorType.submersible;
     _tankType = p?.tankType ?? TankType.verticalCylinder;
     _heightController = TextEditingController(text: p?.height.toString() ?? '1.0');
@@ -128,6 +130,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   _graduationSide = p?.graduationSide ?? GraduationSide.left;
   _majorTickController = TextEditingController(text: (p?.scaleMajorTickMeters ?? 0.1).toString());
   _minorDivsController = TextEditingController(text: (p?.scaleMinorDivisions ?? 4).toString());
+  _storeHistory = p?.storeHistory ?? false;
   }
 
   @override
@@ -209,6 +212,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   graduationSide: _graduationSide,
   scaleMajorTickMeters: double.tryParse(_majorTickController.text.trim())?.clamp(0.01, 1000.0) ?? 0.1,
   scaleMinorDivisions: int.tryParse(_minorDivsController.text.trim())?.clamp(0, 10) ?? 4,
+  storeHistory: _storeHistory,
       );
       Navigator.of(context).pop(project);
     }
@@ -1128,6 +1132,15 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                               if (n > 10) return 'Too many (<=10)';
                               return null;
                             },
+                          ),
+                          const SizedBox(height: 12),
+                          // Store history toggle
+                          SwitchListTile.adaptive(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Store history to DB'),
+                            subtitle: const Text('When ON, readings will be sent to the backend for charts'),
+                            value: _storeHistory,
+                            onChanged: (v) => setState(() => _storeHistory = v),
                           ),
                         ],
                       ),
