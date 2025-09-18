@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'auth_provider.dart';
 import 'landing_page.dart';
+import 'project_repository.dart';
 
 class SignupPage extends StatefulWidget {
   const SignupPage({super.key});
@@ -30,6 +31,12 @@ class _SignupPageState extends State<SignupPage> {
     if (!mounted) return;
     setState(() { _busy = false; _error = err; });
     if (err == null) {
+      // After successful signup (auto-login), sync projects (likely empty) to ensure server state loaded
+      try {
+        final repo = context.read<ProjectRepository>();
+        await repo.syncFromBackend();
+      } catch (_) {}
+      if (!mounted) return;
       Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LandingPage()), (r) => false);
     }
   }

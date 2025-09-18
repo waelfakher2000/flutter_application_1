@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'auth_provider.dart';
 import 'signup_page.dart';
 import 'landing_page.dart';
+import 'project_repository.dart';
 import 'diagnostics_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -24,6 +25,12 @@ class _LoginPageState extends State<LoginPage> {
     if (!mounted) return;
     setState(() { _busy = false; _error = err; });
     if (err == null) {
+      // After successful login, trigger a project sync before navigating
+      try {
+        final repo = context.read<ProjectRepository>();
+        await repo.syncFromBackend();
+      } catch (_) {}
+      if (!mounted) return;
       Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LandingPage()), (r) => false);
     }
   }

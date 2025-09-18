@@ -234,10 +234,16 @@ class LandingOrAuthGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auth = Provider.of<AuthProvider>(context);
+    final repo = Provider.of<ProjectRepository>(context);
     if (auth.loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     if (!auth.isAuthenticated) return const LoginPage();
+    // Once authenticated & repository loaded, attempt a one-time sync
+    if (repo.isLoaded) {
+      // Fire and forget; UI will update via repository notify
+      Future.microtask(() => repo.syncFromBackend());
+    }
     return const LandingPage();
   }
 }
