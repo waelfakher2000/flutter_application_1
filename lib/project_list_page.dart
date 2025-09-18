@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import 'project_model.dart';
@@ -18,7 +17,6 @@ import 'mqtt_service.dart';
 import 'global_mqtt.dart';
 import 'dart:math' as math;
 import 'dart:async';
-import 'global_mqtt_settings_page.dart';
 import 'auth_provider.dart';
 import 'diagnostics_page.dart';
 
@@ -286,6 +284,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
     });
   }
 
+  // Keeping _setSortMode for future feature use (sorting UI), ignore unused warning.
+  // ignore: unused_element
   Future<void> _setSortMode(SortMode mode) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('project_sort_mode', mode.name);
@@ -727,6 +727,23 @@ class _ProjectListPageState extends State<ProjectListPage> {
       appBar: AppBar(
         title: const Text('Projects'),
         actions: [
+          // Theme toggle
+          Builder(builder: (context) {
+            final themeProvider = context.watch<ThemeProvider>();
+            final isDark = themeProvider.themeMode == ThemeMode.dark;
+            return IconButton(
+              tooltip: isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode',
+              icon: Icon(isDark ? Icons.dark_mode : Icons.light_mode),
+              onPressed: () {
+                themeProvider.toggleTheme(!isDark);
+              },
+            );
+          }),
+          IconButton(
+            icon: const Icon(Icons.qr_code_scanner),
+            tooltip: 'Scan QR',
+            onPressed: _scanImport,
+          ),
           IconButton(
             icon: const Icon(Icons.health_and_safety),
             tooltip: 'Diagnostics',
@@ -748,10 +765,24 @@ class _ProjectListPageState extends State<ProjectListPage> {
         ],
       ),
       body: _buildGroupedBody(),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addProject,
-        tooltip: 'Add Project',
-        child: const Icon(Icons.add),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'scanQrFab',
+            onPressed: _scanImport,
+            label: const Text('Scan QR'),
+            icon: const Icon(Icons.qr_code_scanner),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: 'addProjectFab',
+            onPressed: _addProject,
+            tooltip: 'Add Project',
+            child: const Icon(Icons.add),
+          ),
+        ],
       ),
     );
   }
