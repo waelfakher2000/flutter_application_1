@@ -26,11 +26,26 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
   String? _error;
   DateTimeRange? _range; // user-selected interval
   final ValueNotifier<bool> _expanded = ValueNotifier<bool>(false);
-  final TransformationController _transformController = TransformationController();
   Offset? _tooltipPixel; // in child (untransformed) coordinates
   ReadingPoint? _tooltipPoint;
   final GlobalKey _chartKey = GlobalKey();
   int? _selectedIndex; // index of selected point for crosshair
+
+  // Data bounds (global)
+  double? _dataMinT; // epoch ms
+  double? _dataMaxT;
+  double? _dataMinV;
+  double? _dataMaxV;
+
+  // Current viewport (mutable zoom/pan window)
+  double? _viewMinT;
+  double? _viewMaxT;
+  double? _viewMinV;
+  double? _viewMaxV;
+
+  // Scale gesture start snapshot
+  double? _startMinT, _startMaxT, _startMinV, _startMaxV;
+  Offset? _scaleStartFocal; // in local chart coordinates
 
   @override
   void initState() {
@@ -100,6 +115,21 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
           }
         }
         pts.sort((a, b) => a.time.compareTo(b.time));
+        if (pts.isNotEmpty) {
+          final times = pts.map((e)=>e.time.millisecondsSinceEpoch.toDouble()).toList();
+          final vals = pts.map((e)=>e.value).toList();
+          final minT = times.first;
+            final maxT = times.last;
+          double minV = vals.reduce((a,b)=>a<b?a:b);
+          double maxV = vals.reduce((a,b)=>a>b?a:b);
+          if (minV == maxV) maxV += 0.001;
+          _dataMinT = minT; _dataMaxT = maxT; _dataMinV = minV; _dataMaxV = maxV;
+          // Initialize or expand viewport to full data
+          _viewMinT = minT; _viewMaxT = maxT; _viewMinV = minV; _viewMaxV = maxV;
+        } else {
+          _dataMinT = _dataMaxT = _dataMinV = _dataMaxV = null;
+          _viewMinT = _viewMaxT = _viewMinV = _viewMaxV = null;
+        }
         setState(() { _points = pts; _loading = false; });
       } else {
         setState(() { _error = 'Server ${resp.statusCode}'; _loading = false; });
@@ -118,7 +148,17 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
             ? Center(child: Text(_error!))
             : _points.isEmpty
                 ? const Center(child: Text('No readings'))
-    : HistoryChart(key: _chartKey, points: _points, xLabel: 'Time', yLabel: 'Level (m)', selectedIndex: _selectedIndex);
+    : HistoryChart(
+        key: _chartKey,
+        points: _points,
+        xLabel: 'Time',
+        yLabel: 'Level (m)',
+        selectedIndex: _selectedIndex,
+        viewMinT: _viewMinT,
+        viewMaxT: _viewMaxT,
+        viewMinV: _viewMinV,
+        viewMaxV: _viewMaxV,
+      );
 
     return Scaffold(
       appBar: AppBar(
@@ -161,7 +201,7 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
             valueListenable: _expanded,
             builder: (context, isExpanded, _) {
               final double targetHeight = isExpanded ?  (MediaQuery.of(context).size.height * 0.55).clamp(220.0, 520.0) : (isWide ? 300.0 : 250.0);
-              final showReset = !_matrixIsIdentity(_transformController.value);
+              final showReset = _isZoomedOrPanned();
               return AnimatedContainer(
                 duration: const Duration(milliseconds: 250),
                 curve: Curves.easeInOut,
@@ -185,23 +225,15 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
                             },
                           ),
                         ),
-                        InteractiveViewer(
-                          transformationController: _transformController,
-                          minScale: 0.5,
-                          maxScale: 4.0,
-                          panEnabled: true,
-                          scaleEnabled: true,
-                          onInteractionEnd: (_) { setState((){}); },
-                          onInteractionUpdate: (_) { /* rebuild tooltip position relative to new transform */ if (_tooltipPoint != null) setState((){}); },
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.translucent,
-                            onTapDown: (d) => _handleTap(d.localPosition),
-                            onLongPressStart: (d) => _handleTap(d.localPosition),
-                            onLongPressMoveUpdate: (d) => _handleTap(d.localPosition),
-                            onPanDown: (d) => _handleTap(d.localPosition),
-                            onPanUpdate: (d) => _handleTap(d.localPosition),
-                            child: chart,
-                          ),
+                        GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onTapDown: (d) => _handleTap(d.localPosition),
+                          onLongPressStart: (d) => _handleTap(d.localPosition),
+                          onLongPressMoveUpdate: (d) => _handleTap(d.localPosition),
+                          onPanDown: (d) => _handleTap(d.localPosition),
+                          onScaleStart: (d) => _onScaleStart(d.focalPoint),
+                          onScaleUpdate: (d) => _onScaleUpdate(d),
+                          child: chart,
                         ),
                         if (showReset)
                           Positioned(
@@ -210,8 +242,7 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
                             child: ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), minimumSize: const Size(0,0)),
                               onPressed: () {
-                                _transformController.value = Matrix4.identity();
-                                setState((){});
+                                _resetView();
                               },
                               icon: const Icon(Icons.fullscreen_exit, size: 16),
                               label: const Text('Reset', style: TextStyle(fontSize: 12)),
@@ -250,16 +281,92 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
     );
   }
 
-  bool _matrixIsIdentity(Matrix4 m) {
-    final id = Matrix4.identity();
-    for (int i = 0; i < 16; i++) {
-      if ((m.storage[i] - id.storage[i]).abs() > 0.000001) return false;
-    }
-    return true;
+  bool _isZoomedOrPanned() {
+    if (_dataMinT == null) return false;
+    const eps = 0.000001;
+    return (_viewMinT! - _dataMinT!).abs() > eps || (_viewMaxT! - _dataMaxT!).abs() > eps || (_viewMinV! - _dataMinV!).abs() > eps || (_viewMaxV! - _dataMaxV!).abs() > eps;
+  }
+
+  void _resetView() {
+    if (_dataMinT == null) return;
+    setState(() {
+      _viewMinT = _dataMinT; _viewMaxT = _dataMaxT; _viewMinV = _dataMinV; _viewMaxV = _dataMaxV; _tooltipPoint = null; _tooltipPixel = null; _selectedIndex = null;});
+  }
+
+  void _onScaleStart(Offset globalFocal) {
+    final box = _chartKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    _scaleStartFocal = box.globalToLocal(globalFocal);
+    _startMinT = _viewMinT; _startMaxT = _viewMaxT; _startMinV = _viewMinV; _startMaxV = _viewMaxV;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails d) {
+    if (_dataMinT == null || _scaleStartFocal == null) return;
+    final box = _chartKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final size = box.size;
+    const chartPadLeft = 52.0;
+    const bottomAxisSpace = 42.0;
+    const topPad = 12.0;
+    const rightPad = 12.0;
+    final chartRect = Rect.fromLTWH(chartPadLeft, topPad, size.width - chartPadLeft - rightPad, size.height - topPad - bottomAxisSpace);
+    if (chartRect.width <= 0 || chartRect.height <= 0) return;
+
+    final startMinT = _startMinT!; final startMaxT = _startMaxT!;
+    final startMinV = _startMinV!; final startMaxV = _startMaxV!;
+    final rangeT0 = startMaxT - startMinT;
+    final rangeV0 = startMaxV - startMinV;
+    double scale = d.scale; if (scale <= 0) scale = 1;
+    // Limit scale (avoid excessive zoom-in): min span = 1/1000 of data range or 1 second equivalent.
+    final dataRangeT = _dataMaxT! - _dataMinT!;
+    final minSpanT = math.max(dataRangeT / 1000, 1000); // at least 1s
+    final maxSpanT = dataRangeT;
+    final dataRangeV = _dataMaxV! - _dataMinV!;
+    final minSpanV = dataRangeV / 1000;
+    final maxSpanV = dataRangeV * 1.05; // small slack
+
+    // Current focal relative to start gesture
+    final currentFocal = box.globalToLocal(d.focalPoint);
+    final deltaFocal = currentFocal - _scaleStartFocal!;
+    final fx = (( _scaleStartFocal!.dx - chartRect.left) / chartRect.width).clamp(0.0, 1.0);
+    final fy = (( _scaleStartFocal!.dy - chartRect.top) / chartRect.height).clamp(0.0, 1.0);
+
+    // Apply scaling around initial focal (if user pinches)
+  // Clamp returns num when bounds are num; ensure double for further arithmetic.
+  double newSpanT = (rangeT0 / scale).clamp(minSpanT, maxSpanT).toDouble();
+  double newSpanV = (rangeV0 / scale).clamp(minSpanV, maxSpanV).toDouble();
+    double focusT = startMinT + fx * rangeT0;
+    double focusV = startMinV + (1 - fy) * rangeV0; // invert y
+    double newMinT = focusT - fx * newSpanT;
+    double newMaxT = newMinT + newSpanT;
+    double newMinV = focusV - (1 - fy) * newSpanV;
+    double newMaxV = newMinV + newSpanV;
+
+    // Apply pan translation derived from delta focal (after scaling base)
+    final panFracX = deltaFocal.dx / chartRect.width;
+    final panFracY = deltaFocal.dy / chartRect.height;
+    newMinT -= panFracX * newSpanT;
+    newMaxT -= panFracX * newSpanT;
+    newMinV += panFracY * newSpanV; // moving finger down increases y -> shift range up in pixels (so add)
+    newMaxV += panFracY * newSpanV;
+
+    // Clamp within data bounds
+    if (newMinT < _dataMinT!) { newMaxT += (_dataMinT! - newMinT); newMinT = _dataMinT!; }
+    if (newMaxT > _dataMaxT!) { newMinT -= (newMaxT - _dataMaxT!); newMaxT = _dataMaxT!; }
+    if (newMinV < _dataMinV!) { newMaxV += (_dataMinV! - newMinV); newMinV = _dataMinV!; }
+    if (newMaxV > _dataMaxV!) { newMinV -= (newMaxV - _dataMaxV!); newMaxV = _dataMaxV!; }
+
+    setState(() {
+      _viewMinT = newMinT; _viewMaxT = newMaxT; _viewMinV = newMinV; _viewMaxV = newMaxV;
+      // Recompute tooltip pixel if active
+      if (_tooltipPoint != null) {
+        _recomputeTooltipPixel();
+      }
+    });
   }
 
   void _handleTap(Offset pos) {
-  if (_points.isEmpty) return;
+    if (_points.isEmpty) return;
     final box = _chartKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return;
     final size = box.size;
@@ -269,22 +376,13 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
     const topPad = 12.0;
     const rightPad = 12.0;
     final chartRect = Rect.fromLTWH(chartPadLeft, topPad, size.width - chartPadLeft - rightPad, size.height - topPad - bottomAxisSpace);
-
-    // Invert current transform in case zoom/pan applied
-  final Matrix4 inv = Matrix4.inverted(_transformController.value);
-  final storage = inv.storage;
-  final x = storage[0] * pos.dx + storage[4] * pos.dy + storage[12];
-  final y = storage[1] * pos.dx + storage[5] * pos.dy + storage[13];
-  final childPos = Offset(x, y);
+    final childPos = pos; // no external transform now
     if (!chartRect.contains(childPos)) {
       setState(() { _tooltipPoint = null; _tooltipPixel = null; });
       return;
     }
-    final minT = _points.first.time.millisecondsSinceEpoch.toDouble();
-    final maxT = _points.last.time.millisecondsSinceEpoch.toDouble();
-    double minV = _points.map((e)=>e.value).reduce((a,b)=>a<b?a:b);
-    double maxV = _points.map((e)=>e.value).reduce((a,b)=>a>b?a:b);
-    if (minV == maxV) maxV += 0.001;
+    final minT = _viewMinT ?? _points.first.time.millisecondsSinceEpoch.toDouble();
+    final maxT = _viewMaxT ?? _points.last.time.millisecondsSinceEpoch.toDouble();
     final frac = ((childPos.dx - chartRect.left) / chartRect.width).clamp(0.0, 1.0);
     final targetT = minT + (maxT - minT) * frac;
     // Binary search nearest
@@ -307,12 +405,34 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
     final p = _points[idx];
     // Compute pixel for tooltip anchor
     final pX = chartRect.left + ((p.time.millisecondsSinceEpoch - minT) / (maxT - minT)) * chartRect.width;
-    final pY = chartRect.top + (1 - (p.value - minV) / (maxV - minV)) * chartRect.height;
+    final minVView = _viewMinV ?? _points.map((e)=>e.value).reduce((a,b)=>a<b?a:b);
+    final maxVView = _viewMaxV ?? _points.map((e)=>e.value).reduce((a,b)=>a>b?a:b);
+    final pY = chartRect.top + (1 - (p.value - minVView) / (maxVView - minVView)) * chartRect.height;
     setState(() {
       _tooltipPoint = p;
       _tooltipPixel = Offset(pX, pY);
       _selectedIndex = idx;
     });
+  }
+
+  void _recomputeTooltipPixel() {
+    if (_tooltipPoint == null) return;
+    final box = _chartKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final size = box.size;
+    const chartPadLeft = 52.0;
+    const bottomAxisSpace = 42.0;
+    const topPad = 12.0;
+    const rightPad = 12.0;
+    final chartRect = Rect.fromLTWH(chartPadLeft, topPad, size.width - chartPadLeft - rightPad, size.height - topPad - bottomAxisSpace);
+    final minT = _viewMinT ?? _points.first.time.millisecondsSinceEpoch.toDouble();
+    final maxT = _viewMaxT ?? _points.last.time.millisecondsSinceEpoch.toDouble();
+    final minVView = _viewMinV ?? _points.map((e)=>e.value).reduce((a,b)=>a<b?a:b);
+    final maxVView = _viewMaxV ?? _points.map((e)=>e.value).reduce((a,b)=>a>b?a:b);
+    final p = _tooltipPoint!;
+    final pX = chartRect.left + ((p.time.millisecondsSinceEpoch - minT) / (maxT - minT)) * chartRect.width;
+    final pY = chartRect.top + (1 - (p.value - minVView) / (maxVView - minVView)) * chartRect.height;
+    _tooltipPixel = Offset(pX, pY);
   }
 
   Widget _buildTooltip(BuildContext context) {
@@ -400,13 +520,14 @@ class HistoryChart extends StatelessWidget {
   final String xLabel;
   final String yLabel;
   final int? selectedIndex;
-  const HistoryChart({super.key, required this.points, this.xLabel = 'Time', this.yLabel = 'Value', this.selectedIndex});
+  final double? viewMinT, viewMaxT, viewMinV, viewMaxV;
+  const HistoryChart({super.key, required this.points, this.xLabel = 'Time', this.yLabel = 'Value', this.selectedIndex, this.viewMinT, this.viewMaxT, this.viewMinV, this.viewMaxV});
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, constraints) {
       return CustomPaint(
-        painter: _HistoryPainter(points: points, theme: Theme.of(context), xLabel: xLabel, yLabel: yLabel, selectedIndex: selectedIndex),
+        painter: _HistoryPainter(points: points, theme: Theme.of(context), xLabel: xLabel, yLabel: yLabel, selectedIndex: selectedIndex, viewMinT: viewMinT, viewMaxT: viewMaxT, viewMinV: viewMinV, viewMaxV: viewMaxV),
         size: Size(constraints.maxWidth, constraints.maxHeight),
       );
     });
@@ -419,7 +540,8 @@ class _HistoryPainter extends CustomPainter {
   final String xLabel;
   final String yLabel;
   final int? selectedIndex;
-  _HistoryPainter({required this.points, required this.theme, required this.xLabel, required this.yLabel, required this.selectedIndex});
+  final double? viewMinT, viewMaxT, viewMinV, viewMaxV;
+  _HistoryPainter({required this.points, required this.theme, required this.xLabel, required this.yLabel, required this.selectedIndex, this.viewMinT, this.viewMaxT, this.viewMinV, this.viewMaxV});
 
   String _fmtSameDay(DateTime dt) => '${_two(dt.hour)}:${_two(dt.minute)}';
   String _fmtOtherDay(DateTime dt) => '${_two(dt.month)}-${_two(dt.day)} ${_two(dt.hour)}:${_two(dt.minute)}';
@@ -449,10 +571,15 @@ class _HistoryPainter extends CustomPainter {
     }
     final times = points.map((e) => e.time.millisecondsSinceEpoch.toDouble()).toList();
     final values = points.map((e) => e.value).toList();
-    final minT = times.first;
-    final maxT = times.last;
-    double minV = values.reduce((a, b) => a < b ? a : b);
-    double maxV = values.reduce((a, b) => a > b ? a : b);
+  final overallMinT = times.first;
+  final overallMaxT = times.last;
+  double overallMinV = values.reduce((a, b) => a < b ? a : b);
+  double overallMaxV = values.reduce((a, b) => a > b ? a : b);
+  if (overallMinV == overallMaxV) overallMaxV += 0.001;
+  final minT = viewMinT ?? overallMinT;
+  final maxT = viewMaxT ?? overallMaxT;
+  double minV = viewMinV ?? overallMinV;
+  double maxV = viewMaxV ?? overallMaxV;
     if (minV == maxV) { maxV += 0.001; }
 
   final chartPadLeft = 52.0;
@@ -463,9 +590,13 @@ class _HistoryPainter extends CustomPainter {
 
     // Area path
     final path = Path();
+    canvas.save();
+    canvas.clipRect(chart);
     for (int i = 0; i < points.length; i++) {
       final p = points[i];
-      final x = chart.left + ( (p.time.millisecondsSinceEpoch - minT) / (maxT - minT) ) * chart.width;
+      final t = p.time.millisecondsSinceEpoch.toDouble();
+      if (t < minT || t > maxT) continue;
+      final x = chart.left + ( (t - minT) / (maxT - minT) ) * chart.width;
       final y = chart.top + (1 - (p.value - minV) / (maxV - minV)) * chart.height;
       if (i == 0) {
         path.moveTo(x, y);
@@ -480,10 +611,14 @@ class _HistoryPainter extends CustomPainter {
     canvas.drawPath(fillPath, fillPaint);
     canvas.drawPath(path, linePaint);
     canvas.drawPath(path, linePaint);
+    canvas.restore();
 
     // Crosshair & marker if selected
     if (selectedIndex != null && selectedIndex! >=0 && selectedIndex! < points.length) {
       final sp = points[selectedIndex!];
+      if (sp.time.millisecondsSinceEpoch.toDouble() < minT || sp.time.millisecondsSinceEpoch.toDouble() > maxT) {
+        // outside current view
+      }
       final sx = chart.left + ((sp.time.millisecondsSinceEpoch - minT) / (maxT - minT)) * chart.width;
       final sy = chart.top + (1 - (sp.value - minV) / (maxV - minV)) * chart.height;
       final crossPaint = Paint()
@@ -502,8 +637,9 @@ class _HistoryPainter extends CustomPainter {
 
     final textPainter = TextPainter(textDirection: TextDirection.ltr, maxLines: 1);
     // Y labels (5)
-    for (int i = 0; i <= 4; i++) {
-      final frac = i / 4;
+    const yTicks = 4;
+    for (int i = 0; i <= yTicks; i++) {
+      final frac = i / yTicks;
       final v = maxV - (maxV - minV) * frac;
       final y = chart.top + chart.height * frac;
       textPainter.text = TextSpan(text: v.toStringAsFixed(3), style: TextStyle(fontSize: 10, color: theme.colorScheme.onSurface));
