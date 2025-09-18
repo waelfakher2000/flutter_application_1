@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'project_model.dart';
 import 'project_group.dart';
+import 'backend_client.dart' as backend;
 
 class ProjectRepository extends ChangeNotifier {
   List<Project> _projects = [];
@@ -51,6 +52,9 @@ class ProjectRepository extends ChangeNotifier {
     _groups.sort((a, b) => _groupOrder.indexOf(a.id).compareTo(_groupOrder.indexOf(b.id)));
     _loaded = true;
     notifyListeners();
+    // Best-effort initial sync of all projects to backend (fire-and-forget)
+    // This ensures the bridge sees existing projects after reinstall.
+    unawaited(backend.upsertProjectsToBackend(_projects));
   }
 
   // Reload from persistence (used by pull-to-refresh)
@@ -88,6 +92,10 @@ class ProjectRepository extends ChangeNotifier {
     _projectOrder.add(p.id);
     _scheduleSave();
     notifyListeners();
+    // Sync newly added project to backend
+    unawaited(backend.upsertProjectToBackend(p));
+    // Optionally request bridge reload
+    unawaited(backend.requestBridgeReload());
   }
 
   void updateProject(Project updated) {
@@ -102,6 +110,9 @@ class ProjectRepository extends ChangeNotifier {
       );
       _scheduleSave();
       notifyListeners();
+      // Sync updated project to backend
+      unawaited(backend.upsertProjectToBackend(_projects[i]));
+      unawaited(backend.requestBridgeReload());
     }
   }
 
@@ -110,6 +121,8 @@ class ProjectRepository extends ChangeNotifier {
     _projectOrder.removeWhere((e) => e == id);
     _scheduleSave();
     notifyListeners();
+    // No delete endpoint yet; bridge will ignore missing projects on next refresh
+    unawaited(backend.requestBridgeReload());
   }
 
   Project? getById(String id) {

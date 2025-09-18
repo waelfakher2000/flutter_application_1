@@ -10,6 +10,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:http/http.dart' as http;
+import 'auth_provider.dart';
+import 'login_page.dart';
 // Removed backend bridge HTTP and UUID usage
 import 'tank_widget.dart';
 import 'theme_provider.dart';
@@ -19,6 +21,7 @@ import 'mqtt_service.dart';
 import 'landing_page.dart';
 import 'project_list_page.dart';
 import 'project_model.dart';
+import 'history_chart_page.dart';
 // Removed history page (backend dependent)
 import 'package:mqtt_client/mqtt_client.dart' as mqtt;
 import 'global_mqtt.dart';
@@ -122,11 +125,24 @@ const bool enableNativeForegroundService = false;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final startupWatch = Stopwatch()..start();
   await Firebase.initializeApp();
   runApp(MultiProvider(providers: [
     ChangeNotifierProvider(create: (_) => ThemeProvider()),
     ChangeNotifierProvider(create: (_) => ProjectRepository()..load()),
+    ChangeNotifierProvider(create: (_) => AuthProvider()..load()),
   ], child: const TankApp()));
+  // Log first frame time
+  WidgetsBinding.instance.addTimingsCallback((timings) {
+    if (startupWatch.isRunning) {
+      // First frame timings list includes a frame; stop and log.
+      startupWatch.stop();
+      final ft = timings.isNotEmpty ? timings.first : null;
+      final buildMs = ft != null ? ft.buildDuration.inMilliseconds : -1;
+      final rasterMs = ft != null ? ft.rasterDuration.inMilliseconds : -1;
+      debugPrint('[Startup] First frame: totalWall=${startupWatch.elapsedMilliseconds}ms build=${buildMs}ms raster=${rasterMs}ms');
+    }
+  });
 }
 
 Future<void> _requestNotificationPermissions() async {
@@ -208,8 +224,21 @@ class _TankAppState extends State<TankApp> {
         useMaterial3: true,
       ),
       themeMode: themeProvider.themeMode,
-      home: const LandingPage(),
+      home: const LandingOrAuthGate(),
     );
+  }
+}
+
+class LandingOrAuthGate extends StatelessWidget {
+  const LandingOrAuthGate({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final auth = Provider.of<AuthProvider>(context);
+    if (auth.loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (!auth.isAuthenticated) return const LoginPage();
+    return const LandingPage();
   }
 }
 
@@ -1605,7 +1634,58 @@ class _MainTankPageState extends State<MainTankPage> {
                       height: tankH,
                       width: (tankH * 0.65).clamp(140.0, 200.0),
                       child: GestureDetector(
-                        onTap: () {},
+                        onTap: () {
+                          if (widget.storeHistory) {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => HistoryChartPage(
+                                  project: Project(
+                                    id: widget.projectId ?? widget.projectName, // fallback id
+                                    name: widget.projectName,
+                                    broker: widget.broker,
+                                    port: widget.port,
+                                    topic: widget.topic,
+                                    username: widget.username,
+                                    password: widget.password,
+                                    sensorType: widget.sensorType,
+                                    tankType: widget.tankType,
+                                    height: widget.height,
+                                    diameter: widget.diameter,
+                                    length: widget.length,
+                                    width: widget.width,
+                                    wallThickness: widget.wallThickness,
+                                    minThreshold: widget.minThreshold,
+                                    maxThreshold: widget.maxThreshold,
+                                    multiplier: widget.multiplier,
+                                    offset: widget.offset,
+                                    connectedTankCount: widget.connectedTankCount,
+                                    useCustomFormula: widget.useCustomFormula,
+                                    customFormula: widget.customFormula,
+                                    useControlButton: widget.useControlButton,
+                                    controlTopic: widget.controlTopic,
+                                    controlMode: widget.controlMode,
+                                    onValue: widget.onValue,
+                                    offValue: widget.offValue,
+                                    autoControl: widget.autoControl,
+                                    controlRetained: widget.controlRetained,
+                                    controlQos: widget.controlQos,
+                                    lastWillTopic: widget.lastWillTopic,
+                                    payloadIsJson: widget.payloadIsJson,
+                                    jsonFieldIndex: widget.jsonFieldIndex,
+                                    jsonKeyName: widget.jsonKeyName,
+                                    displayTimeFromJson: widget.displayTimeFromJson,
+                                    jsonTimeFieldIndex: widget.jsonTimeFieldIndex,
+                                    jsonTimeKeyName: widget.jsonTimeKeyName,
+                                    graduationSide: widget.graduationSide,
+                                    scaleMajorTickMeters: widget.scaleMajorTickMeters,
+                                    scaleMinorDivisions: widget.scaleMinorDivisions,
+                                    storeHistory: widget.storeHistory,
+                                  ),
+                                ),
+                              ),
+                            );
+                          }
+                        },
                         child: TankWidget(
                         tankType: widget.tankType,
                         waterLevel: _level / widget.height,
@@ -1669,7 +1749,58 @@ class _MainTankPageState extends State<MainTankPage> {
                       height: tankH,
                       width: (tankH * 0.8).clamp(160.0, 300.0),
                       child: GestureDetector(
-                        onTap: () {},
+                        onTap: () {
+                          if (widget.storeHistory) {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => HistoryChartPage(
+                                  project: Project(
+                                    id: widget.projectId ?? widget.projectName,
+                                    name: widget.projectName,
+                                    broker: widget.broker,
+                                    port: widget.port,
+                                    topic: widget.topic,
+                                    username: widget.username,
+                                    password: widget.password,
+                                    sensorType: widget.sensorType,
+                                    tankType: widget.tankType,
+                                    height: widget.height,
+                                    diameter: widget.diameter,
+                                    length: widget.length,
+                                    width: widget.width,
+                                    wallThickness: widget.wallThickness,
+                                    minThreshold: widget.minThreshold,
+                                    maxThreshold: widget.maxThreshold,
+                                    multiplier: widget.multiplier,
+                                    offset: widget.offset,
+                                    connectedTankCount: widget.connectedTankCount,
+                                    useCustomFormula: widget.useCustomFormula,
+                                    customFormula: widget.customFormula,
+                                    useControlButton: widget.useControlButton,
+                                    controlTopic: widget.controlTopic,
+                                    controlMode: widget.controlMode,
+                                    onValue: widget.onValue,
+                                    offValue: widget.offValue,
+                                    autoControl: widget.autoControl,
+                                    controlRetained: widget.controlRetained,
+                                    controlQos: widget.controlQos,
+                                    lastWillTopic: widget.lastWillTopic,
+                                    payloadIsJson: widget.payloadIsJson,
+                                    jsonFieldIndex: widget.jsonFieldIndex,
+                                    jsonKeyName: widget.jsonKeyName,
+                                    displayTimeFromJson: widget.displayTimeFromJson,
+                                    jsonTimeFieldIndex: widget.jsonTimeFieldIndex,
+                                    jsonTimeKeyName: widget.jsonTimeKeyName,
+                                    graduationSide: widget.graduationSide,
+                                    scaleMajorTickMeters: widget.scaleMajorTickMeters,
+                                    scaleMinorDivisions: widget.scaleMinorDivisions,
+                                    storeHistory: widget.storeHistory,
+                                  ),
+                                ),
+                              ),
+                            );
+                          }
+                        },
                         child: TankWidget(
                         tankType: widget.tankType,
                         waterLevel: _level / widget.height,

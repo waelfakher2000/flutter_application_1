@@ -122,6 +122,48 @@ flutter run
 - Historical charting (time‑series storage)
 - Multi-broker monitoring dashboard view
 
+## Authentication (Added)
+The app and backend now support email/password authentication with JWT tokens. Each user's projects and readings are isolated.
+
+### Backend
+Environment variable required:
+- `JWT_SECRET` – secret key for signing JSON Web Tokens.
+
+New endpoints:
+- `POST /signup` `{ email, password }` → `{ ok: true, token }` (auto-login on success)
+- `POST /login` `{ email, password }` → `{ ok: true, token }`
+- `POST /register-device` `{ token: <fcmToken>, projectId? }` (auth required) – associates FCM device with the user for notifications.
+
+Protected existing endpoints (must send `Authorization: Bearer <jwt>`):
+- `GET /projects`
+- `POST /projects`
+- `GET /readings`
+- `POST /readings`
+- `POST /bridge/reload`
+
+Data model changes:
+- Collections `projects`, `readings`, and `devices` now include `userId` and are always queried by it.
+
+### Flutter App Flow
+1. User sees Login screen (or Sign Up to create a new account).
+2. Successful auth stores token securely via `flutter_secure_storage` and sets it for API calls.
+3. Token automatically attached as `Authorization: Bearer ...` for backend sync calls.
+4. On 401 responses the app logs out automatically.
+5. After login the app registers the device FCM token with the backend.
+
+### Logout
+Use the logout icon in the Projects screen AppBar to clear the token and return to the auth gate.
+
+### Notes
+- Passwords hashed with `bcrypt` (cost 10).
+- Tokens expire in 30 days; user will need to re-login after expiration.
+- If adding refresh tokens or password reset in future, extend `auth_provider.dart` accordingly.
+
+### Future Enhancements
+- Token refresh / short-lived access tokens
+- Email verification workflow
+- Password reset via email
+
 ## Contributing
 Open a PR or issue with detailed description. Keep commits focused and prefer small, reviewable changes.
 

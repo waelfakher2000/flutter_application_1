@@ -4,7 +4,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import 'project_model.dart';
-import 'main.dart'; // For MainTankPage
 import 'project_edit_page.dart';
 import 'share_qr_page.dart';
 import 'scan_qr_page.dart';
@@ -12,12 +11,15 @@ import 'project_group.dart';
 import 'theme_provider.dart';
 import 'types.dart';
 import 'project_repository.dart';
+import 'backend_client.dart';
+import 'main.dart'; // For MainTankPage
 import 'widgets/scrolling_text.dart';
 import 'mqtt_service.dart';
 import 'global_mqtt.dart';
 import 'dart:math' as math;
 import 'dart:async';
 import 'global_mqtt_settings_page.dart';
+import 'auth_provider.dart';
 
 // Sorting applies to groups only per requirement
 enum SortMode { name, date, custom }
@@ -46,18 +48,20 @@ class _ProjectListPageState extends State<ProjectListPage> {
   }
 
   double _projectCapacityLiters(Project p) {
-    // Respect custom formula when enabled: evaluate liters at full inner height (h=H)
+    // Compute total capacity (liters) for a project based on geometry or custom formula.
     try {
       if (p.useCustomFormula == true && (p.customFormula?.trim().isNotEmpty ?? false)) {
         final t = p.wallThickness;
-        final H = math.max(0.0, (p.tankType == TankType.horizontalCylinder ? p.diameter : p.height) - 2 * t);
+        final innerH = p.tankType == TankType.horizontalCylinder
+            ? math.max(0.0, p.diameter - 2 * t)
+            : math.max(0.0, p.height - 2 * t);
         final L = math.max(0.0, p.length - 2 * t);
         final W = math.max(0.0, p.width - 2 * t);
         final D = math.max(0.0, p.diameter - 2 * t);
         final liters = _evalCustomFormulaLitersLocal(
           p.customFormula!,
-          h: H,
-          H: H,
+          h: innerH, // full height
+          H: innerH,
           L: L,
           W: W,
           D: D,
@@ -66,30 +70,27 @@ class _ProjectListPageState extends State<ProjectListPage> {
         return math.max(0.0, liters);
       }
     } catch (_) {
-      // Fall through to geometry if formula fails
+      // Fallback to geometric calculation if custom formula fails
     }
 
-    // Geometry-based capacity (liters)
     final t = p.wallThickness;
     switch (p.tankType) {
       case TankType.verticalCylinder:
         final r = math.max(0.0, (p.diameter - 2.0 * t) / 2.0);
         final h = math.max(0.0, p.height - 2.0 * t);
-        return 1000 * (math.pi * r * r * h) * p.connectedTankCount;
+        return math.pi * r * r * h * p.connectedTankCount * 1000.0; // m^3 -> L
       case TankType.horizontalCylinder:
         final r = math.max(0.0, (p.diameter - 2.0 * t) / 2.0);
         final len = math.max(0.0, p.length - 2.0 * t);
-        final full = math.pi * r * r * len; // m^3
-        return 1000 * full * p.connectedTankCount;
+        return math.pi * r * r * len * p.connectedTankCount * 1000.0;
       case TankType.rectangle:
         final l = math.max(0.0, p.length - 2.0 * t);
         final w = math.max(0.0, p.width - 2.0 * t);
         final h = math.max(0.0, p.height - 2.0 * t);
-        return 1000 * (l * w * h) * p.connectedTankCount;
+        return l * w * h * p.connectedTankCount * 1000.0;
     }
   }
 
-  // Local copy of the formula evaluator used in MainTankPage, returning liters.
   double _evalCustomFormulaLitersLocal(
     String expr, {
     required double h,
@@ -104,33 +105,18 @@ class _ProjectListPageState extends State<ProjectListPage> {
     int p = 0;
     while (p < s.length) {
       final ch = s[p];
-      if (ch == '(') {
-        rawTokens.add({'t': 'l', 'v': ch});
-        p++;
-        continue;
-      }
-      if (ch == ')') {
-        rawTokens.add({'t': 'r', 'v': ch});
-        p++;
-        continue;
-      }
-      if ('+-*/'.contains(ch)) {
-        rawTokens.add({'t': 'op', 'v': ch});
-        p++;
-        continue;
-      }
+      if (ch == '(') { rawTokens.add({'t': 'l', 'v': ch}); p++; continue; }
+      if (ch == ')') { rawTokens.add({'t': 'r', 'v': ch}); p++; continue; }
+      if ('+-*/'.contains(ch)) { rawTokens.add({'t': 'op', 'v': ch}); p++; continue; }
       if (RegExp(r"[A-Za-z]").hasMatch(ch)) {
-        final start = p;
-        p++;
-        while (p < s.length && RegExp(r"[A-Za-z]").hasMatch(s[p])) {
-          p++;
-        }
+        final start = p; p++;
+        while (p < s.length && RegExp(r"[A-Za-z]").hasMatch(s[p])) { p++; }
         final name = s.substring(start, p);
         final n = name.toLowerCase();
         double val;
         if (n == 'h' || n == 'level' || n == 'lvl') {
           val = h;
-        } else if (n == 'h' || n == 'height' || n == 'hgt') {
+        } else if (n == 'height' || n == 'hgt') {
           val = H;
         } else if (n == 'l' || n == 'length' || n == 'len') {
           val = L;
@@ -151,17 +137,14 @@ class _ProjectListPageState extends State<ProjectListPage> {
         } else if (name == 'N') {
           val = N;
         } else {
-          throw FormatException('Unknown variable: $name');
+          throw const FormatException('Unknown variable');
         }
         rawTokens.add({'t': 'num', 'v': val.toString()});
         continue;
       }
       if (RegExp(r"[0-9.]").hasMatch(ch)) {
-        final start = p;
-        p++;
-        while (p < s.length && RegExp(r"[0-9.]").hasMatch(s[p])) {
-          p++;
-        }
+        final start = p; p++;
+        while (p < s.length && RegExp(r"[0-9.]").hasMatch(s[p])) { p++; }
         rawTokens.add({'t': 'num', 'v': s.substring(start, p)});
         continue;
       }
@@ -184,11 +167,11 @@ class _ProjectListPageState extends State<ProjectListPage> {
     int i = 0;
     late double Function() parseExpression;
     double parseFactor() {
-      if (i >= tokens.length) throw FormatException('Unexpected end');
+      if (i >= tokens.length) throw const FormatException('Unexpected end');
       final t = tokens[i++];
       if (t == '(') {
         final v = parseExpression();
-        if (i >= tokens.length || tokens[i] != ')') throw FormatException('Missing )');
+        if (i >= tokens.length || tokens[i] != ')') throw const FormatException('Missing )');
         i++;
         return v;
       }
@@ -216,7 +199,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
     };
     final v = parseExpression();
     if (i != tokens.length) throw FormatException('Unexpected token: ${tokens[i]}');
-    return v;
+    return v; // expression already returns liters
   }
 
   Future<void> _applyOrAskForFullScreen() async {
@@ -552,7 +535,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
         repo.addProject(imported.copyWith(name: unique));
       }
     } else {
-      repo.addProject(imported);
+    repo.addProject(imported);
     }
   }
 
@@ -741,53 +724,18 @@ class _ProjectListPageState extends State<ProjectListPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        foregroundColor: Theme.of(context).colorScheme.onPrimary,
-        title: Text(
-          'Projects',
-          style: GoogleFonts.poppins(
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.5,
-          ),
-        ),
+        title: const Text('Projects'),
         actions: [
           IconButton(
-            tooltip: 'MQTT Settings (global)',
-            icon: const Icon(Icons.settings_ethernet),
+            icon: const Icon(Icons.logout),
+            tooltip: 'Logout',
             onPressed: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const GlobalMqttSettingsPage()),
-              );
-              // After returning, optionally refresh preview values
-              if (!mounted) return;
-              await _refreshLiveVolumes();
+              final auth = context.read<AuthProvider>();
+              await auth.logout();
+              if (mounted) {
+                Navigator.of(context).pushNamedAndRemoveUntil('/', (r) => false);
+              }
             },
-          ),
-          PopupMenuButton<SortMode>(
-            tooltip: 'Sort projects',
-            initialValue: _sortMode,
-            onSelected: (m) => _setSortMode(m),
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: SortMode.name, child: Text('Sort by name')),
-              PopupMenuItem(value: SortMode.date, child: Text('Sort by date')),
-              PopupMenuItem(value: SortMode.custom, child: Text('Custom order')),
-            ],
-            icon: const Icon(Icons.sort),
-          ),
-          IconButton(
-            tooltip: 'Import from QR',
-            icon: const Icon(Icons.qr_code_scanner),
-            onPressed: _scanImport,
-          ),
-          // Theme toggle is placed on the first page (Projects list) as the rightmost icon
-          Consumer<ThemeProvider>(
-            builder: (context, themeProvider, _) => IconButton(
-              tooltip: 'Toggle Theme',
-              icon: Icon(themeProvider.themeMode == ThemeMode.dark ? Icons.dark_mode : Icons.light_mode),
-              onPressed: () {
-                themeProvider.toggleTheme(themeProvider.themeMode == ThemeMode.light);
-              },
-            ),
           ),
         ],
       ),
@@ -805,6 +753,17 @@ class _ProjectListPageState extends State<ProjectListPage> {
     if (!repo.isLoaded) {
       return const Center(child: CircularProgressIndicator());
     }
+    // Backend URL hint: if not configured, show an info banner so user understands why alerts/history may not work
+    return FutureBuilder<String?>(
+      future: resolveBackendUrl(),
+      builder: (context, snap) {
+        final backendUrl = snap.data;
+        return _buildGroupedBodyInner(repo, backendUrl);
+      },
+    );
+  }
+
+  Widget _buildGroupedBodyInner(ProjectRepository repo, String? backendUrl) {
   final allProjects = repo.projects;
   final groups = repo.groups.toList();
     final String q = _searchQuery.trim().toLowerCase();
@@ -896,6 +855,19 @@ class _ProjectListPageState extends State<ProjectListPage> {
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
+          if ((backendUrl == null || backendUrl.isEmpty))
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.secondaryContainer,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text(
+                'Backend not configured. Push notifications and history require BACKEND_URL.\nRun with --dart-define=BACKEND_URL=YOUR_URL',
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
           _searchBar(),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
@@ -1114,14 +1086,15 @@ class _ProjectListPageState extends State<ProjectListPage> {
     final repo = context.read<ProjectRepository>();
     final index = repo.projects.indexWhere((p) => p.id == project.id);
     final tile = ListTile(
-  title: Text(project.name),
-  subtitle: const Text('Uses global MQTT settings'),
+      title: Text(project.name),
+      subtitle: Text(project.storeHistory ? 'History enabled' : 'History disabled'),
+      // Always navigate to live dashboard (MainTankPage)
       onTap: () {
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (context) => MainTankPage(
-              broker: project.broker, // no longer used, kept for constructor compatibility
-              port: project.port,     // no longer used, kept for constructor compatibility
+            builder: (_) => MainTankPage(
+              broker: project.broker,
+              port: project.port,
               topic: project.topic,
               sensorType: project.sensorType,
               tankType: project.tankType,
@@ -1130,8 +1103,8 @@ class _ProjectListPageState extends State<ProjectListPage> {
               length: project.length,
               width: project.width,
               wallThickness: project.wallThickness,
-              username: project.username, // legacy, ignored in service init
-              password: project.password, // legacy, ignored in service init
+              username: project.username,
+              password: project.password,
               minThreshold: project.minThreshold,
               maxThreshold: project.maxThreshold,
               projectName: project.name,
@@ -1139,8 +1112,6 @@ class _ProjectListPageState extends State<ProjectListPage> {
               multiplier: project.multiplier,
               offset: project.offset,
               connectedTankCount: project.connectedTankCount,
-              useCustomFormula: project.useCustomFormula,
-              customFormula: project.customFormula,
               useControlButton: project.useControlButton,
               controlTopic: project.controlTopic,
               controlMode: project.controlMode,
@@ -1150,13 +1121,14 @@ class _ProjectListPageState extends State<ProjectListPage> {
               controlRetained: project.controlRetained,
               controlQos: project.controlQos,
               lastWillTopic: project.lastWillTopic,
-              // New payload parsing options
               payloadIsJson: project.payloadIsJson,
               jsonFieldIndex: project.jsonFieldIndex,
               jsonKeyName: project.jsonKeyName,
               displayTimeFromJson: project.displayTimeFromJson,
               jsonTimeFieldIndex: project.jsonTimeFieldIndex,
               jsonTimeKeyName: project.jsonTimeKeyName,
+              useCustomFormula: project.useCustomFormula,
+              customFormula: project.customFormula,
               graduationSide: project.graduationSide,
               scaleMajorTickMeters: project.scaleMajorTickMeters,
               scaleMinorDivisions: project.scaleMinorDivisions,
@@ -1183,9 +1155,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
         ],
       ),
     );
-    if (!draggable) {
-      return tile;
-    }
+    if (!draggable) return tile;
     return LongPressDraggable<Project>(
       data: project,
       feedback: Material(

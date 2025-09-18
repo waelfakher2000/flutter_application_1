@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Align with Flutter light surface color (Material3 default) -->
+    <color name="splash_background">#FFFFFFFF</color>
+</resources>

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark mode variant to avoid light flash in dark theme -->
+    <color name="splash_background">#FF000000</color>
+</resources>
