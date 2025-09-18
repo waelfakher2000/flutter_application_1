@@ -124,3 +124,35 @@ Future<List<Map<String, dynamic>>> fetchReadings({required String projectId, int
   }
   return [];
 }
+
+Future<List<Map<String, dynamic>>> fetchProjects() async {
+  final base = await resolveBackendUrl();
+  if (base == null || base.isEmpty) return [];
+  final uri = Uri.parse(base.endsWith('/') ? '${base}projects' : '$base/projects');
+  final resp = await httpGet(uri);
+  if (resp.statusCode >= 200 && resp.statusCode < 300) {
+    try {
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      final items = (decoded['items'] as List<dynamic>? ?? [])
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      return items;
+    } catch (_) { return []; }
+  }
+  return [];
+}
+
+Future<void> deleteProjectFromBackend(String id) async {
+  try {
+    final base = await resolveBackendUrl();
+    if (base == null || base.isEmpty) return;
+    final uri = Uri.parse(base.endsWith('/') ? '${base}projects/$id' : '$base/projects/$id');
+    final headers = <String, String>{
+      if (_authToken != null) 'Authorization': 'Bearer ' + _authToken!,
+    };
+    final resp = await http.delete(uri, headers: headers);
+    if (resp.statusCode == 401 && _onUnauthorized != null) { _onUnauthorized!(); }
+  } catch (e) {
+    debugPrint('[backend] delete error: $e');
+  }
+}

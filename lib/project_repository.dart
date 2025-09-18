@@ -121,7 +121,8 @@ class ProjectRepository extends ChangeNotifier {
     _projectOrder.removeWhere((e) => e == id);
     _scheduleSave();
     notifyListeners();
-    // No delete endpoint yet; bridge will ignore missing projects on next refresh
+    // Inform backend & bridge
+    unawaited(backend.deleteProjectFromBackend(id));
     unawaited(backend.requestBridgeReload());
   }
 
@@ -238,5 +239,67 @@ class ProjectRepository extends ChangeNotifier {
     _groups.sort((a, b) => _groupOrder.indexOf(a.id).compareTo(_groupOrder.indexOf(b.id)));
     _scheduleSave();
     notifyListeners();
+  }
+
+  // --- Synchronization ---
+  // Strategy:
+  // 1. Fetch remote projects.
+  // 2. For each local project not on server -> push up (so offline creations survive).
+  // 3. For each remote project:
+  //    - if exists locally -> update local fields (excluding transient caches) keeping local createdAt if remote missing
+  //    - if absent locally -> add it (append to end of order)
+  // 4. Optionally: remove local projects that are no longer on server (we'll keep them for now to avoid accidental loss).
+  Future<void> syncFromBackend() async {
+    if (!_loaded) return; // wait until local loaded
+    final remote = await backend.fetchProjects();
+    if (remote.isEmpty) {
+      // Still push locals so server catches up (fresh account case)
+      unawaited(backend.upsertProjectsToBackend(_projects));
+      return;
+    }
+    final remoteIds = remote.map((e) => e['id']?.toString()).whereType<String>().toSet();
+    // Push locals missing remotely
+    for (final p in _projects) {
+      if (!remoteIds.contains(p.id)) {
+        unawaited(backend.upsertProjectToBackend(p));
+      }
+    }
+    // Incorporate remote
+    bool changed = false;
+    for (final r in remote) {
+      final rid = r['id']?.toString();
+      if (rid == null) continue;
+      final existingIndex = _projects.indexWhere((p) => p.id == rid);
+      if (existingIndex >= 0) {
+        final prev = _projects[existingIndex];
+        // Build updated project using Project.fromJson with fallback to existing transient cache fields
+        try {
+          final mergedJson = {
+            ...prev.toJson(), // start with local
+            ...r, // remote overrides definitional fields
+            'lastLiquidLiters': prev.lastLiquidLiters,
+            'lastTotalLiters': prev.lastTotalLiters,
+            'lastUpdated': prev.lastUpdated?.toIso8601String(),
+          };
+          final updated = Project.fromJson(mergedJson);
+          _projects[existingIndex] = updated;
+          changed = true;
+        } catch (_) {}
+      } else {
+        // New project from server
+        try {
+          final pj = Project.fromJson(r);
+          _projects.add(pj);
+          if (!_projectOrder.contains(pj.id)) _projectOrder.add(pj.id);
+          changed = true;
+        } catch (_) {}
+      }
+    }
+    if (changed) {
+      // Re-apply ordering constraints
+      _projects.sort((a, b) => _projectOrder.indexOf(a.id).compareTo(_projectOrder.indexOf(b.id)));
+      _scheduleSave();
+      notifyListeners();
+    }
   }
 }

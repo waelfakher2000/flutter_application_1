@@ -68,6 +68,7 @@ class AuthProvider extends ChangeNotifier {
             }
           } catch (_) {}
           notifyListeners();
+          // UI layer should trigger ProjectRepository.syncFromBackend() after login.
           return null;
         }
         return 'Malformed response';
