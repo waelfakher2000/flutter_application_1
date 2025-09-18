@@ -20,6 +20,7 @@ import 'dart:math' as math;
 import 'dart:async';
 import 'global_mqtt_settings_page.dart';
 import 'auth_provider.dart';
+import 'diagnostics_page.dart';
 
 // Sorting applies to groups only per requirement
 enum SortMode { name, date, custom }
@@ -726,6 +727,13 @@ class _ProjectListPageState extends State<ProjectListPage> {
       appBar: AppBar(
         title: const Text('Projects'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.health_and_safety),
+            tooltip: 'Diagnostics',
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const DiagnosticsPage()));
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Logout',

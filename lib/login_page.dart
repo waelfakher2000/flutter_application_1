@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'auth_provider.dart';
 import 'signup_page.dart';
 import 'landing_page.dart';
+import 'diagnostics_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -30,7 +31,9 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Login')),
+      appBar: AppBar(title: const Text('Login'), actions: [
+        IconButton(onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => const DiagnosticsPage())); }, icon: const Icon(Icons.medical_information))
+      ]),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),

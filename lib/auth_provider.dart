@@ -39,10 +39,12 @@ class AuthProvider extends ChangeNotifier {
     try {
       final base = await backend.resolveBackendUrl();
       if (base == null) return 'Backend URL not configured';
+      debugPrint('[Auth] Attempting $path -> base=$base');
       final uri = Uri.parse(base.endsWith('/') ? '$base$path' : '$base/$path');
       final resp = await http.post(uri,
           headers: const {'Content-Type': 'application/json'},
           body: jsonEncode({'email': email.trim(), 'password': password}));
+      debugPrint('[Auth] $path response ${resp.statusCode}: ${resp.body}');
       if (resp.statusCode >= 200 && resp.statusCode < 300) {
         final data = jsonDecode(resp.body);
         if (data['ok'] == true && data['token'] != null && autoLogin) {
