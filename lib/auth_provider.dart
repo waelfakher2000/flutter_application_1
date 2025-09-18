@@ -20,41 +20,67 @@ class AuthProvider extends ChangeNotifier {
   bool get loading => _loading;
 
   Future<void> load() async {
+    debugPrint('[Auth] load() start');
     // Primary secure storage
-    _token = await _storage.read(key: _kTokenKey);
-    _email = await _storage.read(key: _kEmailKey);
+    try {
+      _token = await _storage.read(key: _kTokenKey);
+      _email = await _storage.read(key: _kEmailKey);
+      debugPrint('[Auth] secure storage token? ${_token != null} email=$_email');
+    } catch (e) {
+      debugPrint('[Auth] secure storage read error: $e');
+    }
     // Fallback: SharedPreferences (diagnostic / resilience if secure storage wiped by reinstall)
     if (_token == null) {
       try {
         final prefs = await SharedPreferences.getInstance();
         _token = prefs.getString(_kTokenKey);
         _email = _email ?? prefs.getString(_kEmailKey);
-      } catch (_) {}
-    }
-    if (_token != null) backend.setAuthToken(_token);
-
-    bool sawUnauthorized = false;
-    backend.setOnUnauthorized(() async {
-      if (!sawUnauthorized) {
-        sawUnauthorized = true;
-        // Soft retry: validate token once via /me
-        final ok = await _validateToken();
-        if (ok) {
-          sawUnauthorized = false; // reset if /me succeeded
-          return;
-        }
+        debugPrint('[Auth] fallback SharedPreferences token? ${_token != null}');
+      } catch (e) {
+        debugPrint('[Auth] SharedPreferences fallback error: $e');
       }
-      logout();
+    }
+    if (_token != null) {
+      backend.setAuthToken(_token);
+      debugPrint('[Auth] backend.setAuthToken applied');
+    } else {
+      debugPrint('[Auth] No token found on load');
+    }
+
+    bool handlingUnauthorized = false;
+    backend.setOnUnauthorized(() async {
+      // Skip if we truly have no token loaded (avoid logout loop on startup noise)
+      if (_token == null) {
+        debugPrint('[Auth] onUnauthorized but token is null -> ignoring (startup race)');
+        return;
+      }
+      if (handlingUnauthorized) return; // collapse bursts
+      handlingUnauthorized = true;
+      debugPrint('[Auth] onUnauthorized received -> validating via /me');
+      final ok = await _validateToken();
+      if (ok) {
+        debugPrint('[Auth] /me succeeded after unauthorized -> keeping session');
+        handlingUnauthorized = false;
+        return;
+      }
+      debugPrint('[Auth] token invalid -> logging out');
+      await logout();
+      handlingUnauthorized = false;
     });
 
     // Optional proactive validation (non-blocking)
     if (_token != null) {
       Future.microtask(() async {
         final valid = await _validateToken();
-        if (!valid) logout();
+        debugPrint('[Auth] proactive /me validation result: $valid');
+        if (!valid) {
+          debugPrint('[Auth] proactive validation failed -> logout');
+          await logout();
+        }
       });
     }
     _loading = false;
+    debugPrint('[Auth] load() complete tokenPresent=${_token != null}');
     notifyListeners();
   }
 
@@ -83,6 +109,7 @@ class AuthProvider extends ChangeNotifier {
           _email = email.trim();
           await _storage.write(key: _kTokenKey, value: _token);
             await _storage.write(key: _kEmailKey, value: _email);
+          debugPrint('[Auth] stored token (len=${_token?.length})');
           // Mirror to SharedPreferences for resilience
           try { final prefs = await SharedPreferences.getInstance(); await prefs.setString(_kTokenKey, _token!); if (_email != null) await prefs.setString(_kEmailKey, _email!); } catch (_) {}
           backend.setAuthToken(_token); // propagate token
@@ -119,6 +146,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    debugPrint('[Auth] logout()');
     _token = null;
     _email = null;
     await _storage.delete(key: _kTokenKey);
@@ -134,6 +162,7 @@ class AuthProvider extends ChangeNotifier {
       if (base == null || _token == null) return false;
       final uri = Uri.parse(base.endsWith('/') ? '${base}me' : '$base/me');
       final resp = await http.get(uri, headers: { 'Authorization': 'Bearer ' + _token! });
+      debugPrint('[Auth] /me status=${resp.statusCode}');
       if (resp.statusCode >= 200 && resp.statusCode < 300) {
         return true;
       }

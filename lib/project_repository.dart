@@ -92,9 +92,8 @@ class ProjectRepository extends ChangeNotifier {
     _projectOrder.add(p.id);
     _scheduleSave();
     notifyListeners();
-    // Sync newly added project to backend
+    // Immediate sync attempt (will silently skip if auth not ready)
     unawaited(backend.upsertProjectToBackend(p));
-    // Optionally request bridge reload
     unawaited(backend.requestBridgeReload());
   }
 
@@ -110,7 +109,7 @@ class ProjectRepository extends ChangeNotifier {
       );
       _scheduleSave();
       notifyListeners();
-      // Sync updated project to backend
+      // Immediate sync (guarded inside backend helper if auth missing)
       unawaited(backend.upsertProjectToBackend(_projects[i]));
       unawaited(backend.requestBridgeReload());
     }
@@ -121,7 +120,7 @@ class ProjectRepository extends ChangeNotifier {
     _projectOrder.removeWhere((e) => e == id);
     _scheduleSave();
     notifyListeners();
-    // Inform backend & bridge
+    // Inform backend & bridge (delete is skipped if auth not present)
     unawaited(backend.deleteProjectFromBackend(id));
     unawaited(backend.requestBridgeReload());
   }

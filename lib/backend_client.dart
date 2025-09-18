@@ -51,6 +51,11 @@ Future<void> upsertProjectToBackend(Project p) async {
       debugPrint('[backend] Skipping upsert: BACKEND_URL not configured');
       return;
     }
+    if (_authToken == null) {
+      // Avoid generating unauthorized noise before auth loads.
+      debugPrint('[backend] Skip upsert (no auth token yet) id=${p.id}');
+      return;
+    }
     final uri = Uri.parse(base.endsWith('/') ? '${base}projects' : '$base/projects');
     final body = jsonEncode(_toBackendProject(p));
     final resp = await http.post(
@@ -81,6 +86,10 @@ Future<void> requestBridgeReload() async {
   try {
     final base = await resolveBackendUrl();
     if (base == null || base.isEmpty) return;
+    if (_authToken == null) {
+      debugPrint('[backend] Skip bridge reload (no auth token yet)');
+      return;
+    }
     final uri = Uri.parse(base.endsWith('/') ? '${base}bridge/reload' : '$base/bridge/reload');
     await http.post(uri, headers: { if (_authToken != null) 'Authorization': 'Bearer ' + _authToken! });
   } catch (_) {}
