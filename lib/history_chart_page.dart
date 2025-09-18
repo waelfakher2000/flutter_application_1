@@ -46,6 +46,7 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
   // Scale gesture start snapshot
   double? _startMinT, _startMaxT, _startMinV, _startMaxV;
   Offset? _scaleStartFocal; // in local chart coordinates
+  bool _gestureIsMulti = false; // track if current scale gesture became multi-touch
 
   @override
   void initState() {
@@ -231,8 +232,9 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
                           onLongPressStart: (d) => _handleTap(d.localPosition),
                           onLongPressMoveUpdate: (d) => _handleTap(d.localPosition),
                           onPanDown: (d) => _handleTap(d.localPosition),
-                          onScaleStart: (d) => _onScaleStart(d.focalPoint),
-                          onScaleUpdate: (d) => _onScaleUpdate(d),
+                          onScaleStart: _onScaleStart,
+                          onScaleUpdate: _onScaleUpdate,
+                          onScaleEnd: _onScaleEnd,
                           child: chart,
                         ),
                         if (showReset)
@@ -293,10 +295,11 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
       _viewMinT = _dataMinT; _viewMaxT = _dataMaxT; _viewMinV = _dataMinV; _viewMaxV = _dataMaxV; _tooltipPoint = null; _tooltipPixel = null; _selectedIndex = null;});
   }
 
-  void _onScaleStart(Offset globalFocal) {
+  void _onScaleStart(ScaleStartDetails d) {
     final box = _chartKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return;
-    _scaleStartFocal = box.globalToLocal(globalFocal);
+    _gestureIsMulti = false;
+    _scaleStartFocal = box.globalToLocal(d.focalPoint);
     _startMinT = _viewMinT; _startMaxT = _viewMaxT; _startMinV = _viewMinV; _startMaxV = _viewMaxV;
   }
 
@@ -304,6 +307,20 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
     if (_dataMinT == null || _scaleStartFocal == null) return;
     final box = _chartKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return;
+    // Single finger: move crosshair/tooltip only (no pan/zoom)
+    if (d.pointerCount < 2 && !_gestureIsMulti) {
+      _updateCrosshairFromGlobal(d.focalPoint);
+      return;
+    }
+
+    // Transition to multi-touch (start zoom) when second finger added
+    if (!_gestureIsMulti && d.pointerCount >= 2) {
+      _gestureIsMulti = true;
+      // Re-anchor focal to current combined focal for smoother pinch start
+      _scaleStartFocal = box.globalToLocal(d.focalPoint);
+      _startMinT = _viewMinT; _startMaxT = _viewMaxT; _startMinV = _viewMinV; _startMaxV = _viewMaxV;
+    }
+    if (!_gestureIsMulti) return; // safety
     final size = box.size;
     const chartPadLeft = 52.0;
     const bottomAxisSpace = 42.0;
@@ -362,6 +379,55 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
       if (_tooltipPoint != null) {
         _recomputeTooltipPixel();
       }
+    });
+  }
+
+  void _onScaleEnd(ScaleEndDetails d) {
+    // Nothing special now; could add inertia or fling later.
+  }
+
+  void _updateCrosshairFromGlobal(Offset globalPos) {
+    if (_points.isEmpty) return;
+    final box = _chartKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    const chartPadLeft = 52.0;
+    const bottomAxisSpace = 42.0;
+    const topPad = 12.0;
+    const rightPad = 12.0;
+    final size = box.size;
+    final chartRect = Rect.fromLTWH(chartPadLeft, topPad, size.width - chartPadLeft - rightPad, size.height - topPad - bottomAxisSpace);
+    final local = box.globalToLocal(globalPos);
+    if (!chartRect.contains(local)) return; // keep previous selection
+    final minT = _viewMinT ?? _points.first.time.millisecondsSinceEpoch.toDouble();
+    final maxT = _viewMaxT ?? _points.last.time.millisecondsSinceEpoch.toDouble();
+    final frac = ((local.dx - chartRect.left) / chartRect.width).clamp(0.0, 1.0);
+    final targetT = minT + (maxT - minT) * frac;
+    // Binary search nearest
+    int lo = 0, hi = _points.length - 1;
+    while (lo < hi) {
+      final mid = (lo + hi) >> 1;
+      final tMid = _points[mid].time.millisecondsSinceEpoch.toDouble();
+      if (tMid < targetT) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    int idx = lo;
+    if (idx > 0) {
+      final prevT = _points[idx-1].time.millisecondsSinceEpoch.toDouble();
+      final currT = _points[idx].time.millisecondsSinceEpoch.toDouble();
+      if ((targetT - prevT).abs() < (currT - targetT).abs()) idx = idx - 1;
+    }
+    final p = _points[idx];
+    final minVView = _viewMinV ?? _points.map((e)=>e.value).reduce((a,b)=>a<b?a:b);
+    final maxVView = _viewMaxV ?? _points.map((e)=>e.value).reduce((a,b)=>a>b?a:b);
+    final pX = chartRect.left + ((p.time.millisecondsSinceEpoch - minT) / (maxT - minT)) * chartRect.width;
+    final pY = chartRect.top + (1 - (p.value - minVView) / (maxVView - minVView)) * chartRect.height;
+    setState(() {
+      _tooltipPoint = p;
+      _tooltipPixel = Offset(pX, pY);
+      _selectedIndex = idx;
     });
   }
 
