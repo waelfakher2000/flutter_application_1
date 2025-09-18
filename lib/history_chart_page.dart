@@ -44,7 +44,7 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
   double? _viewMaxV;
 
   // Scale gesture start snapshot
-  double? _startMinT, _startMaxT, _startMinV, _startMaxV;
+  double? _startMinT, _startMaxT; // vertical snapshots removed (vertical zoom locked)
   Offset? _scaleStartFocal; // in local chart coordinates
   bool _gestureIsMulti = false; // track if current scale gesture became multi-touch
 
@@ -300,7 +300,7 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
     if (box == null) return;
     _gestureIsMulti = false;
     _scaleStartFocal = box.globalToLocal(d.focalPoint);
-    _startMinT = _viewMinT; _startMaxT = _viewMaxT; _startMinV = _viewMinV; _startMaxV = _viewMaxV;
+  _startMinT = _viewMinT; _startMaxT = _viewMaxT;
   }
 
   void _onScaleUpdate(ScaleUpdateDetails d) {
@@ -318,7 +318,7 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
       _gestureIsMulti = true;
       // Re-anchor focal to current combined focal for smoother pinch start
       _scaleStartFocal = box.globalToLocal(d.focalPoint);
-      _startMinT = _viewMinT; _startMaxT = _viewMaxT; _startMinV = _viewMinV; _startMaxV = _viewMaxV;
+  _startMinT = _viewMinT; _startMaxT = _viewMaxT;
     }
     if (!_gestureIsMulti) return; // safety
     final size = box.size;
@@ -329,49 +329,40 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
     final chartRect = Rect.fromLTWH(chartPadLeft, topPad, size.width - chartPadLeft - rightPad, size.height - topPad - bottomAxisSpace);
     if (chartRect.width <= 0 || chartRect.height <= 0) return;
 
-    final startMinT = _startMinT!; final startMaxT = _startMaxT!;
-    final startMinV = _startMinV!; final startMaxV = _startMaxV!;
-    final rangeT0 = startMaxT - startMinT;
-    final rangeV0 = startMaxV - startMinV;
+  final startMinT = _startMinT!; final startMaxT = _startMaxT!;
     double scale = d.scale; if (scale <= 0) scale = 1;
     // Limit scale (avoid excessive zoom-in): min span = 1/1000 of data range or 1 second equivalent.
-    final dataRangeT = _dataMaxT! - _dataMinT!;
+  final dataRangeT = _dataMaxT! - _dataMinT!;
     final minSpanT = math.max(dataRangeT / 1000, 1000); // at least 1s
     final maxSpanT = dataRangeT;
-    final dataRangeV = _dataMaxV! - _dataMinV!;
-    final minSpanV = dataRangeV / 1000;
-    final maxSpanV = dataRangeV * 1.05; // small slack
+    // vertical zoom disabled
 
     // Current focal relative to start gesture
     final currentFocal = box.globalToLocal(d.focalPoint);
     final deltaFocal = currentFocal - _scaleStartFocal!;
-    final fx = (( _scaleStartFocal!.dx - chartRect.left) / chartRect.width).clamp(0.0, 1.0);
-    final fy = (( _scaleStartFocal!.dy - chartRect.top) / chartRect.height).clamp(0.0, 1.0);
+  final fx = (( _scaleStartFocal!.dx - chartRect.left) / chartRect.width).clamp(0.0, 1.0);
 
     // Apply scaling around initial focal (if user pinches)
   // Clamp returns num when bounds are num; ensure double for further arithmetic.
-  double newSpanT = (rangeT0 / scale).clamp(minSpanT, maxSpanT).toDouble();
-  double newSpanV = (rangeV0 / scale).clamp(minSpanV, maxSpanV).toDouble();
-    double focusT = startMinT + fx * rangeT0;
-    double focusV = startMinV + (1 - fy) * rangeV0; // invert y
+    final rangeT0 = startMaxT - startMinT;
+    double newSpanT = (rangeT0 / scale).clamp(minSpanT, maxSpanT).toDouble();
+    double focusT = startMinT + fx * rangeT0; // horizontal focal
     double newMinT = focusT - fx * newSpanT;
     double newMaxT = newMinT + newSpanT;
-    double newMinV = focusV - (1 - fy) * newSpanV;
-    double newMaxV = newMinV + newSpanV;
+    double newMinV = _dataMinV!; // lock vertical
+    double newMaxV = _dataMaxV!;
 
     // Apply pan translation derived from delta focal (after scaling base)
     final panFracX = deltaFocal.dx / chartRect.width;
-    final panFracY = deltaFocal.dy / chartRect.height;
+  // vertical panning disabled
     newMinT -= panFracX * newSpanT;
     newMaxT -= panFracX * newSpanT;
-    newMinV += panFracY * newSpanV; // moving finger down increases y -> shift range up in pixels (so add)
-    newMaxV += panFracY * newSpanV;
+  // vertical panning disabled
 
     // Clamp within data bounds
     if (newMinT < _dataMinT!) { newMaxT += (_dataMinT! - newMinT); newMinT = _dataMinT!; }
     if (newMaxT > _dataMaxT!) { newMinT -= (newMaxT - _dataMaxT!); newMaxT = _dataMaxT!; }
-    if (newMinV < _dataMinV!) { newMaxV += (_dataMinV! - newMinV); newMinV = _dataMinV!; }
-    if (newMaxV > _dataMaxV!) { newMinV -= (newMaxV - _dataMaxV!); newMaxV = _dataMaxV!; }
+  // vertical clamping unnecessary since locked
 
     setState(() {
       _viewMinT = newMinT; _viewMaxT = newMaxT; _viewMinV = newMinV; _viewMaxV = newMaxV;
