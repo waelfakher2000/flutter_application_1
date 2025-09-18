@@ -31,22 +31,7 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
   final GlobalKey _chartKey = GlobalKey();
   int? _selectedIndex; // index of selected point for crosshair
 
-  // Data bounds (global)
-  double? _dataMinT; // epoch ms
-  double? _dataMaxT;
-  double? _dataMinV;
-  double? _dataMaxV;
-
-  // Current viewport (mutable zoom/pan window)
-  double? _viewMinT;
-  double? _viewMaxT;
-  double? _viewMinV;
-  double? _viewMaxV;
-
-  // Scale gesture start snapshot
-  double? _startMinT, _startMaxT; // vertical snapshots removed (vertical zoom locked)
-  Offset? _scaleStartFocal; // in local chart coordinates
-  bool _gestureIsMulti = false; // track if current scale gesture became multi-touch
+  // (Zoom removed) Always derive bounds from _points when rendering.
 
   @override
   void initState() {
@@ -117,19 +102,13 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
         }
         pts.sort((a, b) => a.time.compareTo(b.time));
         if (pts.isNotEmpty) {
-          final times = pts.map((e)=>e.time.millisecondsSinceEpoch.toDouble()).toList();
           final vals = pts.map((e)=>e.value).toList();
-          final minT = times.first;
-            final maxT = times.last;
           double minV = vals.reduce((a,b)=>a<b?a:b);
           double maxV = vals.reduce((a,b)=>a>b?a:b);
           if (minV == maxV) maxV += 0.001;
-          _dataMinT = minT; _dataMaxT = maxT; _dataMinV = minV; _dataMaxV = maxV;
-          // Initialize or expand viewport to full data
-          _viewMinT = minT; _viewMaxT = maxT; _viewMinV = minV; _viewMaxV = maxV;
+          // Full range shown (zoom removed)
         } else {
-          _dataMinT = _dataMaxT = _dataMinV = _dataMaxV = null;
-          _viewMinT = _viewMaxT = _viewMinV = _viewMaxV = null;
+          // No viewport needed when empty
         }
         setState(() { _points = pts; _loading = false; });
       } else {
@@ -155,10 +134,7 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
         xLabel: 'Time',
         yLabel: 'Level (m)',
         selectedIndex: _selectedIndex,
-        viewMinT: _viewMinT,
-        viewMaxT: _viewMaxT,
-        viewMinV: _viewMinV,
-        viewMaxV: _viewMaxV,
+  // viewport removed
       );
 
     return Scaffold(
@@ -202,7 +178,6 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
             valueListenable: _expanded,
             builder: (context, isExpanded, _) {
               final double targetHeight = isExpanded ?  (MediaQuery.of(context).size.height * 0.55).clamp(220.0, 520.0) : (isWide ? 300.0 : 250.0);
-              final showReset = _isZoomedOrPanned();
               return AnimatedContainer(
                 duration: const Duration(milliseconds: 250),
                 curve: Curves.easeInOut,
@@ -232,24 +207,12 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
                           onLongPressStart: (d) => _handleTap(d.localPosition),
                           onLongPressMoveUpdate: (d) => _handleTap(d.localPosition),
                           onPanDown: (d) => _handleTap(d.localPosition),
-                          onScaleStart: _onScaleStart,
-                          onScaleUpdate: _onScaleUpdate,
-                          onScaleEnd: _onScaleEnd,
+                          // Simple drag updates crosshair
+                          onPanUpdate: (d) => _updateCrosshairFromGlobal(d.globalPosition),
+                          onPanStart: (d) => _updateCrosshairFromGlobal(d.globalPosition),
                           child: chart,
                         ),
-                        if (showReset)
-                          Positioned(
-                            top: 8,
-                            right: 8,
-                            child: ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), minimumSize: const Size(0,0)),
-                              onPressed: () {
-                                _resetView();
-                              },
-                              icon: const Icon(Icons.fullscreen_exit, size: 16),
-                              label: const Text('Reset', style: TextStyle(fontSize: 12)),
-                            ),
-                          ),
+                        // Reset button removed
                         if (_tooltipPoint != null && _tooltipPixel != null)
                         if (_tooltipPoint != null && _tooltipPixel != null)
                           Positioned(
@@ -283,99 +246,7 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
     );
   }
 
-  bool _isZoomedOrPanned() {
-    if (_dataMinT == null) return false;
-    const eps = 0.000001;
-    return (_viewMinT! - _dataMinT!).abs() > eps || (_viewMaxT! - _dataMaxT!).abs() > eps || (_viewMinV! - _dataMinV!).abs() > eps || (_viewMaxV! - _dataMaxV!).abs() > eps;
-  }
-
-  void _resetView() {
-    if (_dataMinT == null) return;
-    setState(() {
-      _viewMinT = _dataMinT; _viewMaxT = _dataMaxT; _viewMinV = _dataMinV; _viewMaxV = _dataMaxV; _tooltipPoint = null; _tooltipPixel = null; _selectedIndex = null;});
-  }
-
-  void _onScaleStart(ScaleStartDetails d) {
-    final box = _chartKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null) return;
-    _gestureIsMulti = false;
-    _scaleStartFocal = box.globalToLocal(d.focalPoint);
-  _startMinT = _viewMinT; _startMaxT = _viewMaxT;
-  }
-
-  void _onScaleUpdate(ScaleUpdateDetails d) {
-    if (_dataMinT == null || _scaleStartFocal == null) return;
-    final box = _chartKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null) return;
-    // Single finger: move crosshair/tooltip only (no pan/zoom)
-    if (d.pointerCount < 2 && !_gestureIsMulti) {
-      _updateCrosshairFromGlobal(d.focalPoint);
-      return;
-    }
-
-    // Transition to multi-touch (start zoom) when second finger added
-    if (!_gestureIsMulti && d.pointerCount >= 2) {
-      _gestureIsMulti = true;
-      // Re-anchor focal to current combined focal for smoother pinch start
-      _scaleStartFocal = box.globalToLocal(d.focalPoint);
-  _startMinT = _viewMinT; _startMaxT = _viewMaxT;
-    }
-    if (!_gestureIsMulti) return; // safety
-    final size = box.size;
-    const chartPadLeft = 52.0;
-    const bottomAxisSpace = 42.0;
-    const topPad = 12.0;
-    const rightPad = 12.0;
-    final chartRect = Rect.fromLTWH(chartPadLeft, topPad, size.width - chartPadLeft - rightPad, size.height - topPad - bottomAxisSpace);
-    if (chartRect.width <= 0 || chartRect.height <= 0) return;
-
-  final startMinT = _startMinT!; final startMaxT = _startMaxT!;
-    double scale = d.scale; if (scale <= 0) scale = 1;
-    // Limit scale (avoid excessive zoom-in): min span = 1/1000 of data range or 1 second equivalent.
-  final dataRangeT = _dataMaxT! - _dataMinT!;
-    final minSpanT = math.max(dataRangeT / 1000, 1000); // at least 1s
-    final maxSpanT = dataRangeT;
-    // vertical zoom disabled
-
-    // Current focal relative to start gesture
-    final currentFocal = box.globalToLocal(d.focalPoint);
-    final deltaFocal = currentFocal - _scaleStartFocal!;
-  final fx = (( _scaleStartFocal!.dx - chartRect.left) / chartRect.width).clamp(0.0, 1.0);
-
-    // Apply scaling around initial focal (if user pinches)
-  // Clamp returns num when bounds are num; ensure double for further arithmetic.
-    final rangeT0 = startMaxT - startMinT;
-    double newSpanT = (rangeT0 / scale).clamp(minSpanT, maxSpanT).toDouble();
-    double focusT = startMinT + fx * rangeT0; // horizontal focal
-    double newMinT = focusT - fx * newSpanT;
-    double newMaxT = newMinT + newSpanT;
-    double newMinV = _dataMinV!; // lock vertical
-    double newMaxV = _dataMaxV!;
-
-    // Apply pan translation derived from delta focal (after scaling base)
-    final panFracX = deltaFocal.dx / chartRect.width;
-  // vertical panning disabled
-    newMinT -= panFracX * newSpanT;
-    newMaxT -= panFracX * newSpanT;
-  // vertical panning disabled
-
-    // Clamp within data bounds
-    if (newMinT < _dataMinT!) { newMaxT += (_dataMinT! - newMinT); newMinT = _dataMinT!; }
-    if (newMaxT > _dataMaxT!) { newMinT -= (newMaxT - _dataMaxT!); newMaxT = _dataMaxT!; }
-  // vertical clamping unnecessary since locked
-
-    setState(() {
-      _viewMinT = newMinT; _viewMaxT = newMaxT; _viewMinV = newMinV; _viewMaxV = newMaxV;
-      // Recompute tooltip pixel if active
-      if (_tooltipPoint != null) {
-        _recomputeTooltipPixel();
-      }
-    });
-  }
-
-  void _onScaleEnd(ScaleEndDetails d) {
-    // Nothing special now; could add inertia or fling later.
-  }
+  // Zoom & pan removed: only crosshair update remains
 
   void _updateCrosshairFromGlobal(Offset globalPos) {
     if (_points.isEmpty) return;
@@ -389,8 +260,8 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
     final chartRect = Rect.fromLTWH(chartPadLeft, topPad, size.width - chartPadLeft - rightPad, size.height - topPad - bottomAxisSpace);
     final local = box.globalToLocal(globalPos);
     if (!chartRect.contains(local)) return; // keep previous selection
-    final minT = _viewMinT ?? _points.first.time.millisecondsSinceEpoch.toDouble();
-    final maxT = _viewMaxT ?? _points.last.time.millisecondsSinceEpoch.toDouble();
+  final minT = _points.first.time.millisecondsSinceEpoch.toDouble();
+  final maxT = _points.last.time.millisecondsSinceEpoch.toDouble();
     final frac = ((local.dx - chartRect.left) / chartRect.width).clamp(0.0, 1.0);
     final targetT = minT + (maxT - minT) * frac;
     // Binary search nearest
@@ -411,8 +282,8 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
       if ((targetT - prevT).abs() < (currT - targetT).abs()) idx = idx - 1;
     }
     final p = _points[idx];
-    final minVView = _viewMinV ?? _points.map((e)=>e.value).reduce((a,b)=>a<b?a:b);
-    final maxVView = _viewMaxV ?? _points.map((e)=>e.value).reduce((a,b)=>a>b?a:b);
+  final minVView = _points.map((e)=>e.value).reduce((a,b)=>a<b?a:b);
+  final maxVView = _points.map((e)=>e.value).reduce((a,b)=>a>b?a:b);
     final pX = chartRect.left + ((p.time.millisecondsSinceEpoch - minT) / (maxT - minT)) * chartRect.width;
     final pY = chartRect.top + (1 - (p.value - minVView) / (maxVView - minVView)) * chartRect.height;
     setState(() {
@@ -438,8 +309,8 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
       setState(() { _tooltipPoint = null; _tooltipPixel = null; });
       return;
     }
-    final minT = _viewMinT ?? _points.first.time.millisecondsSinceEpoch.toDouble();
-    final maxT = _viewMaxT ?? _points.last.time.millisecondsSinceEpoch.toDouble();
+  final minT = _points.first.time.millisecondsSinceEpoch.toDouble();
+  final maxT = _points.last.time.millisecondsSinceEpoch.toDouble();
     final frac = ((childPos.dx - chartRect.left) / chartRect.width).clamp(0.0, 1.0);
     final targetT = minT + (maxT - minT) * frac;
     // Binary search nearest
@@ -462,8 +333,8 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
     final p = _points[idx];
     // Compute pixel for tooltip anchor
     final pX = chartRect.left + ((p.time.millisecondsSinceEpoch - minT) / (maxT - minT)) * chartRect.width;
-    final minVView = _viewMinV ?? _points.map((e)=>e.value).reduce((a,b)=>a<b?a:b);
-    final maxVView = _viewMaxV ?? _points.map((e)=>e.value).reduce((a,b)=>a>b?a:b);
+  final minVView = _points.map((e)=>e.value).reduce((a,b)=>a<b?a:b);
+  final maxVView = _points.map((e)=>e.value).reduce((a,b)=>a>b?a:b);
     final pY = chartRect.top + (1 - (p.value - minVView) / (maxVView - minVView)) * chartRect.height;
     setState(() {
       _tooltipPoint = p;
@@ -472,25 +343,7 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
     });
   }
 
-  void _recomputeTooltipPixel() {
-    if (_tooltipPoint == null) return;
-    final box = _chartKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null) return;
-    final size = box.size;
-    const chartPadLeft = 52.0;
-    const bottomAxisSpace = 42.0;
-    const topPad = 12.0;
-    const rightPad = 12.0;
-    final chartRect = Rect.fromLTWH(chartPadLeft, topPad, size.width - chartPadLeft - rightPad, size.height - topPad - bottomAxisSpace);
-    final minT = _viewMinT ?? _points.first.time.millisecondsSinceEpoch.toDouble();
-    final maxT = _viewMaxT ?? _points.last.time.millisecondsSinceEpoch.toDouble();
-    final minVView = _viewMinV ?? _points.map((e)=>e.value).reduce((a,b)=>a<b?a:b);
-    final maxVView = _viewMaxV ?? _points.map((e)=>e.value).reduce((a,b)=>a>b?a:b);
-    final p = _tooltipPoint!;
-    final pX = chartRect.left + ((p.time.millisecondsSinceEpoch - minT) / (maxT - minT)) * chartRect.width;
-    final pY = chartRect.top + (1 - (p.value - minVView) / (maxVView - minVView)) * chartRect.height;
-    _tooltipPixel = Offset(pX, pY);
-  }
+  // _recomputeTooltipPixel removed (always recomputed on interaction)
 
   Widget _buildTooltip(BuildContext context) {
     final p = _tooltipPoint!;
