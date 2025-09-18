@@ -721,12 +721,42 @@ class _ProjectListPageState extends State<ProjectListPage> {
     );
   }
 
+  PopupMenuButton<SortMode> _sortMenu(BuildContext context) {
+    return PopupMenuButton<SortMode>(
+      tooltip: 'Sort Groups',
+      icon: const Icon(Icons.sort),
+      onSelected: (mode) async {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('project_sort_mode', mode.name);
+        setState(() { _sortMode = mode; });
+      },
+      itemBuilder: (c) => [
+        CheckedPopupMenuItem(
+          value: SortMode.custom,
+          checked: _sortMode == SortMode.custom,
+          child: const Text('Custom (drag)'),
+        ),
+        CheckedPopupMenuItem(
+          value: SortMode.name,
+          checked: _sortMode == SortMode.name,
+          child: const Text('Name A-Z'),
+        ),
+        CheckedPopupMenuItem(
+          value: SortMode.date,
+          checked: _sortMode == SortMode.date,
+          child: const Text('Creation Date'),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Projects'),
         actions: [
+          _sortMenu(context),
           // Theme toggle
           Builder(builder: (context) {
             final themeProvider = context.watch<ThemeProvider>();
@@ -734,9 +764,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
             return IconButton(
               tooltip: isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode',
               icon: Icon(isDark ? Icons.dark_mode : Icons.light_mode),
-              onPressed: () {
-                themeProvider.toggleTheme(!isDark);
-              },
+              onPressed: () { themeProvider.toggleTheme(!isDark); },
             );
           }),
           IconButton(
@@ -747,9 +775,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
           IconButton(
             icon: const Icon(Icons.health_and_safety),
             tooltip: 'Diagnostics',
-            onPressed: () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const DiagnosticsPage()));
-            },
+            onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => const DiagnosticsPage())); },
           ),
           IconButton(
             icon: const Icon(Icons.logout),
@@ -757,9 +783,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
             onPressed: () async {
               final auth = context.read<AuthProvider>();
               await auth.logout();
-              if (mounted) {
-                Navigator.of(context).pushNamedAndRemoveUntil('/', (r) => false);
-              }
+              if (mounted) { Navigator.of(context).pushNamedAndRemoveUntil('/', (r) => false); }
             },
           ),
         ],

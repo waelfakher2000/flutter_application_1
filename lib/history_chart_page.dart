@@ -79,14 +79,19 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
       final to = _range?.end;
       final items = await fetchReadings(projectId: widget.project.id, limit: 1000, from: from, to: to);
       if (items.isEmpty) {
-        // Could be empty or unauthorized; attempt a lightweight probe to detect 401
+        // Probe for 401 and retry once after slight delay (token might just have been set)
         final probeParams = <String,String>{'projectId': widget.project.id, 'limit':'1'};
         final qp = probeParams.entries.map((e)=>'${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}').join('&');
-        final uri = Uri.parse(base.endsWith('/') ? '${base}readings?$qp' : '$base/readings?$qp');
-        final resp = await httpGet(uri);
+        final probeUri = Uri.parse(base.endsWith('/') ? '${base}readings?$qp' : '$base/readings?$qp');
+        final resp = await httpGet(probeUri);
         if (resp.statusCode == 401) {
-          setState(() { _error = 'Unauthorized (401). Please re-login.'; _loading = false; });
-          return;
+          // Retry after short delay if token may not yet be propagated
+          await Future.delayed(const Duration(milliseconds: 200));
+          final resp2 = await httpGet(probeUri);
+          if (resp2.statusCode == 401) {
+            setState(() { _error = 'Unauthorized (401). Tap to re-login.'; _loading = false; });
+            return;
+          }
         }
       }
       final pts = <ReadingPoint>[];
@@ -107,32 +112,52 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
 
   @override
   Widget build(BuildContext context) {
-  final bool isWide = MediaQuery.of(context).size.width > 640;
     final chart = _loading
         ? const Center(child: CircularProgressIndicator())
         : _error != null
             ? Center(child: Text(_error!))
             : _points.isEmpty
                 ? const Center(child: Text('No readings'))
-    : HistoryChart(
+                : HistoryChart(
         key: _chartKey,
         points: _points,
         xLabel: 'Time',
         yLabel: 'Level (m)',
         selectedIndex: _selectedIndex,
-  // viewport removed
       );
-
+    // If unauthorized error, provide button to go back for re-login
+    final bool unauthorized = _error != null && _error!.toLowerCase().startsWith('unauthorized');
+    final bodyWidget = _loading
+        ? const Center(child: CircularProgressIndicator())
+        : _error != null
+            ? Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_error!, textAlign: TextAlign.center),
+                    if (unauthorized) ...[
+                      const SizedBox(height: 12),
+                      ElevatedButton(
+                        onPressed: () { Navigator.of(context).pop(); },
+                        child: const Text('Back to Projects'),
+                      ),
+                    ]
+                  ],
+                ),
+              )
+            : _points.isEmpty
+                ? const Center(child: Text('No readings'))
+                : _buildChartContainer(chart);
     return Scaffold(
       appBar: AppBar(
         title: Text('History - ${widget.project.name}'),
         actions: [
-        if (!_loading && _points.isNotEmpty)
-          IconButton(
-            tooltip: 'Export CSV',
-            icon: const Icon(Icons.download),
-            onPressed: _exportCsv,
-          ),
+          if (!_loading && _points.isNotEmpty)
+            IconButton(
+              tooltip: 'Export CSV',
+              icon: const Icon(Icons.download),
+              onPressed: _exportCsv,
+            ),
           IconButton(
             tooltip: 'Pick interval',
             icon: const Icon(Icons.date_range),
@@ -141,94 +166,92 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
         ],
       ),
-      body: Column(
-        children: [
-          if (_range != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '${_range!.start}  →  ${_range!.end}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+      body: bodyWidget,
+    );
+  }
+
+  Widget _buildChartContainer(Widget chart) {
+    // existing chart column moved here for clarity
+    return Column(
+      children: [
+        if (_range != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${_range!.start}  →  ${_range!.end}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  TextButton(onPressed: () { setState(() { _range = null; }); _load(); }, child: const Text('Clear'))
-                ],
-              ),
+                ),
+                TextButton(onPressed: () { setState(() { _range = null; }); _load(); }, child: const Text('Clear'))
+              ],
             ),
-          // Chart area with limited default height
-          ValueListenableBuilder<bool>(
-            valueListenable: _expanded,
-            builder: (context, isExpanded, _) {
-              final double targetHeight = isExpanded ?  (MediaQuery.of(context).size.height * 0.55).clamp(220.0, 520.0) : (isWide ? 300.0 : 250.0);
-              return AnimatedContainer(
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeInOut,
-                padding: const EdgeInsets.all(12),
-                height: targetHeight,
-                width: double.infinity,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.4),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: Listener(
-                            behavior: HitTestBehavior.opaque,
-                            onPointerDown: (e) {
-                              _handleTap(e.localPosition);
-                            },
-                          ),
-                        ),
-                        GestureDetector(
-                          behavior: HitTestBehavior.translucent,
-                          onTapDown: (d) => _handleTap(d.localPosition),
-                          onLongPressStart: (d) => _handleTap(d.localPosition),
-                          onLongPressMoveUpdate: (d) => _handleTap(d.localPosition),
-                          onPanDown: (d) => _handleTap(d.localPosition),
-                          // Simple drag updates crosshair
-                          onPanUpdate: (d) => _updateCrosshairFromGlobal(d.globalPosition),
-                          onPanStart: (d) => _updateCrosshairFromGlobal(d.globalPosition),
-                          child: chart,
-                        ),
-                        // Reset button removed
-                        if (_tooltipPoint != null && _tooltipPixel != null)
-                        if (_tooltipPoint != null && _tooltipPixel != null)
-                          Positioned(
-                            left: _clampTooltip(_tooltipPixel!.dx + 8, context),
-                            top: _clampTooltipY(_tooltipPixel!.dy - 30, context),
-                            child: _buildTooltip(context),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
           ),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 16, bottom: 8),
-              child: ValueListenableBuilder<bool>(
-                valueListenable: _expanded,
-                builder: (context, isExpanded, _) => TextButton.icon(
-                  onPressed: () => _expanded.value = !isExpanded,
-                  icon: Icon(isExpanded ? Icons.expand_less : Icons.expand_more),
-                  label: Text(isExpanded ? 'Collapse' : 'Expand'),
+        ValueListenableBuilder<bool>(
+          valueListenable: _expanded,
+          builder: (context, isExpanded, _) {
+            final double targetHeight = isExpanded ?  (MediaQuery.of(context).size.height * 0.55).clamp(220.0, 520.0) : (MediaQuery.of(context).size.width > 640 ? 300.0 : 250.0);
+            return AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeInOut,
+              padding: const EdgeInsets.all(12),
+              height: targetHeight,
+              width: double.infinity,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.4),
                 ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: Listener(
+                          behavior: HitTestBehavior.opaque,
+                          onPointerDown: (e) { _handleTap(e.localPosition); },
+                        ),
+                      ),
+                      GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTapDown: (d) => _handleTap(d.localPosition),
+                        onLongPressStart: (d) => _handleTap(d.localPosition),
+                        onLongPressMoveUpdate: (d) => _handleTap(d.localPosition),
+                        onPanDown: (d) => _handleTap(d.localPosition),
+                        onPanUpdate: (d) => _updateCrosshairFromGlobal(d.globalPosition),
+                        child: chart,
+                      ),
+                      if (_tooltipPoint != null && _tooltipPixel != null)
+                        Positioned(
+                          left: _clampTooltip(_tooltipPixel!.dx + 8, context),
+                          top: _clampTooltipY(_tooltipPixel!.dy - 30, context),
+                          child: _buildTooltip(context),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ); // <-- close AnimatedContainer
+          },
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: Padding(
+            padding: const EdgeInsets.only(right: 16, bottom: 8),
+            child: ValueListenableBuilder<bool>(
+              valueListenable: _expanded,
+              builder: (context, isExpanded, _) => TextButton.icon(
+                onPressed: () => _expanded.value = !isExpanded,
+                icon: Icon(isExpanded ? Icons.expand_less : Icons.expand_more),
+                label: Text(isExpanded ? 'Collapse' : 'Expand'),
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
