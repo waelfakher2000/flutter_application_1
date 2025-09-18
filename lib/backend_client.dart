@@ -90,3 +90,37 @@ String? _authToken; // set by Auth integration
 void setAuthToken(String? token) { _authToken = token; }
 VoidCallback? _onUnauthorized;
 void setOnUnauthorized(VoidCallback? cb) { _onUnauthorized = cb; }
+
+Future<http.Response> httpGet(Uri uri) async {
+  final headers = <String, String>{
+    'Accept': 'application/json',
+    if (_authToken != null) 'Authorization': 'Bearer ' + _authToken!,
+  };
+  final resp = await http.get(uri, headers: headers);
+  if (resp.statusCode == 401 && _onUnauthorized != null) { _onUnauthorized!(); }
+  return resp;
+}
+
+Future<List<Map<String, dynamic>>> fetchReadings({required String projectId, int limit = 1000, DateTime? from, DateTime? to}) async {
+  final base = await resolveBackendUrl();
+  if (base == null || base.isEmpty) return [];
+  final params = <String, String>{
+    'projectId': projectId,
+    'limit': limit.toString(),
+  };
+  if (from != null) params['from'] = from.toUtc().toIso8601String();
+  if (to != null) params['to'] = to.toUtc().toIso8601String();
+  final qp = params.entries.map((e) => '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}').join('&');
+  final uri = Uri.parse(base.endsWith('/') ? '${base}readings?$qp' : '$base/readings?$qp');
+  final resp = await httpGet(uri);
+  if (resp.statusCode >= 200 && resp.statusCode < 300) {
+    try {
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      final items = (decoded['items'] as List<dynamic>? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+      return items;
+    } catch (_) { return []; }
+  }
+  return [];
+}

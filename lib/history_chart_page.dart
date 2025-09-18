@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -76,44 +75,31 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
         setState(() { _error = 'Backend not configured'; _loading = false; });
         return;
       }
-      final params = <String, String>{
-        'projectId': widget.project.id,
-        'limit': '1000',
-      };
-      if (_range != null) {
-        // Backend expects ISO8601 or implement both; we'll use toIso8601String
-        params['from'] = _range!.start.toUtc().toIso8601String();
-        params['to'] = _range!.end.toUtc().toIso8601String();
-      }
-      final qp = params.entries.map((e) => '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}').join('&');
-      final uri = Uri.parse(base.endsWith('/') ? '${base}readings?$qp' : '$base/readings?$qp');
-      final resp = await httpGet(uri);
-      if (resp.statusCode >= 200 && resp.statusCode < 300) {
-        final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
-        final items = (decoded['items'] as List<dynamic>? ?? []);
-        final pts = <ReadingPoint>[];
-        for (final r in items) {
-          final tsStr = r['ts'];
-          final lvl = (r['levelMeters'] is num) ? (r['levelMeters'] as num).toDouble() : null;
-          if (lvl != null && tsStr is String) {
-            final ts = DateTime.tryParse(tsStr);
-            if (ts != null) pts.add(ReadingPoint(ts, lvl));
-          }
+      final from = _range?.start;
+      final to = _range?.end;
+      final items = await fetchReadings(projectId: widget.project.id, limit: 1000, from: from, to: to);
+      if (items.isEmpty) {
+        // Could be empty or unauthorized; attempt a lightweight probe to detect 401
+        final probeParams = <String,String>{'projectId': widget.project.id, 'limit':'1'};
+        final qp = probeParams.entries.map((e)=>'${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}').join('&');
+        final uri = Uri.parse(base.endsWith('/') ? '${base}readings?$qp' : '$base/readings?$qp');
+        final resp = await httpGet(uri);
+        if (resp.statusCode == 401) {
+          setState(() { _error = 'Unauthorized (401). Please re-login.'; _loading = false; });
+          return;
         }
-        pts.sort((a, b) => a.time.compareTo(b.time));
-        if (pts.isNotEmpty) {
-          final vals = pts.map((e)=>e.value).toList();
-          double minV = vals.reduce((a,b)=>a<b?a:b);
-          double maxV = vals.reduce((a,b)=>a>b?a:b);
-          if (minV == maxV) maxV += 0.001;
-          // Full range shown (zoom removed)
-        } else {
-          // No viewport needed when empty
-        }
-        setState(() { _points = pts; _loading = false; });
-      } else {
-        setState(() { _error = 'Server ${resp.statusCode}'; _loading = false; });
       }
+      final pts = <ReadingPoint>[];
+      for (final r in items) {
+        final tsStr = r['ts'];
+        final lvl = (r['levelMeters'] is num) ? (r['levelMeters'] as num).toDouble() : null;
+        if (lvl != null && tsStr is String) {
+          final ts = DateTime.tryParse(tsStr);
+          if (ts != null) pts.add(ReadingPoint(ts, lvl));
+        }
+      }
+      pts.sort((a,b)=>a.time.compareTo(b.time));
+      setState(() { _points = pts; _loading = false; });
     } catch (e) {
       setState(() { _error = e.toString(); _loading = false; });
     }
