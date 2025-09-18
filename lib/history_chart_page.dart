@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 // Conditional CSV downloader: stub for mobile/desktop, web implementation for web
 import 'csv_download/download_csv_stub.dart'
   if (dart.library.html) 'csv_download/download_csv_web.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'backend_client.dart';
 import 'project_model.dart';
 
@@ -360,17 +361,21 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
       final csv = sb.toString();
       final rangeSuffix = _range != null ? '_${_range!.start.toIso8601String()}_${_range!.end.toIso8601String()}' : '';
       final fileName = 'readings$rangeSuffix.csv';
-      // Web path handled by injected download function; non-web we write to temp and share.
-      bool downloadedOnWeb = false;
-      try {
+      // If web: trigger browser download. Else: write to temp & share.
+      // kIsWeb is only available via foundation, so ensure import present at top.
+      // (If removed earlier, re-add) import 'package:flutter/foundation.dart' show kIsWeb; // near imports.
+      // Using conditional import for triggerCsvDownload keeps code lean.
+      // On web this will cause a file download; we show a snackbar after for feedback.
+      // On non-web, proceed with local file share.
+      // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
+      // We rely on compile-time constant kIsWeb.
+      // Provide user feedback for success path.
+      if (kIsWeb) {
         await triggerCsvDownload(fileName, csv);
-        // If running on web, above completes actual download; on other platforms it's a no-op.
-        // We best-effort detect web by absence of File operations below; continue to file save otherwise.
-        downloadedOnWeb = true; // Will be ignored silently on non-web since stub returns.
-      } catch (_) {
-        // Ignore; fall back to native path.
-      }
-      if (!downloadedOnWeb) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('CSV download started')));
+        }
+      } else {
         final dir = await getTemporaryDirectory();
         final file = File('${dir.path}/$fileName');
         await file.writeAsString(csv);
