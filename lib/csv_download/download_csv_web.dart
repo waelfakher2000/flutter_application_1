@@ -2,7 +2,7 @@
 // Uses a Blob + anchor element to trigger browser download.
 // Only compiled on web via conditional import.
 
-// ignore: avoid_web_libraries_in_flutter
+// ignore: avoid_web_libraries_in_flutter, deprecated_member_use
 import 'dart:html' as html;
 
 Future<void> triggerCsvDownload(String fileName, String csvContent) async {

@@ -83,14 +83,40 @@ class ProjectRepository extends ChangeNotifier {
       await prefs.setString('project_groups', ProjectGroup.encode(_groups));
       await prefs.setStringList('project_order', _projectOrder);
       await prefs.setStringList('group_order', _groupOrder);
+      if (kDebugMode) {
+        // Simple verification read-back (not parsing fully to avoid perf hit on large sets repeatedly)
+        final len = (_projects.length);
+        debugPrint('[Repo] Saved projects=$len groups=${_groups.length}');
+      }
     } catch (_) {}
+  }
+
+  // Debug helper: force a read-back validation and log counts & first project snapshot.
+  Future<void> debugValidatePersistence() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pStr = prefs.getString('projects');
+      if (pStr == null) {
+        debugPrint('[Repo][Validate] No projects key found');
+        return;
+      }
+      final decoded = Project.decode(pStr);
+      debugPrint('[Repo][Validate] decoded count=${decoded.length}');
+      if (decoded.isNotEmpty) {
+        final first = decoded.first;
+        debugPrint('[Repo][Validate] first.id=${first.id} name=${first.name} height=${first.height} customFormula=${first.customFormula != null}');
+      }
+    } catch (e) {
+      debugPrint('[Repo][Validate] error: $e');
+    }
   }
 
   // Project ops
   void addProject(Project p) {
     _projects.add(p);
     _projectOrder.add(p.id);
-    _scheduleSave();
+    // Structural change -> save immediately
+    unawaited(_saveNow());
     notifyListeners();
     // Immediate sync attempt (will silently skip if auth not ready)
     unawaited(backend.upsertProjectToBackend(p));
@@ -107,7 +133,8 @@ class ProjectRepository extends ChangeNotifier {
         lastTotalLiters: updated.lastTotalLiters ?? prev.lastTotalLiters,
         lastUpdated: updated.lastUpdated ?? prev.lastUpdated,
       );
-      _scheduleSave();
+      // Persist immediately for definitional changes
+      unawaited(_saveNow());
       notifyListeners();
       // Immediate sync (guarded inside backend helper if auth missing)
       unawaited(backend.upsertProjectToBackend(_projects[i]));
@@ -118,7 +145,7 @@ class ProjectRepository extends ChangeNotifier {
   void deleteProject(String id) {
     _projects.removeWhere((e) => e.id == id);
     _projectOrder.removeWhere((e) => e == id);
-    _scheduleSave();
+    unawaited(_saveNow());
     notifyListeners();
     // Inform backend & bridge (delete is skipped if auth not present)
     unawaited(backend.deleteProjectFromBackend(id));
@@ -151,7 +178,7 @@ class ProjectRepository extends ChangeNotifier {
   void addGroup(ProjectGroup g) {
     _groups.add(g);
     _groupOrder.add(g.id);
-    _scheduleSave();
+    unawaited(_saveNow());
     notifyListeners();
   }
 
@@ -159,7 +186,7 @@ class ProjectRepository extends ChangeNotifier {
     try {
       final g = _groups.firstWhere((e) => e.id == id);
       g.name = newName;
-      _scheduleSave();
+      _scheduleSave(); // still debounced; renames less critical
       notifyListeners();
     } catch (_) {}
   }
@@ -168,7 +195,7 @@ class ProjectRepository extends ChangeNotifier {
     _projects = _projects.map((p) => p.groupId == id ? p.copyWith(groupId: null) : p).toList();
     _groups.removeWhere((g) => g.id == id);
     _groupOrder.removeWhere((e) => e == id);
-    _scheduleSave();
+    unawaited(_saveNow());
     notifyListeners();
   }
 
@@ -176,7 +203,7 @@ class ProjectRepository extends ChangeNotifier {
     _projects.removeWhere((p) => p.groupId == id);
     _groups.removeWhere((g) => g.id == id);
     _groupOrder.removeWhere((e) => e == id);
-    _scheduleSave();
+    unawaited(_saveNow());
     notifyListeners();
   }
 
@@ -184,7 +211,7 @@ class ProjectRepository extends ChangeNotifier {
     final i = _projects.indexWhere((e) => e.id == projectId);
     if (i < 0) return;
     _projects[i] = _projects[i].copyWith(groupId: groupId);
-    _scheduleSave();
+    _scheduleSave(); // group assignment can stay debounced
     notifyListeners();
   }
 
@@ -222,7 +249,7 @@ class ProjectRepository extends ChangeNotifier {
     _projectOrder = newOrder;
     // Now reorder _projects to match new order
     _projects.sort((a, b) => _projectOrder.indexOf(a.id).compareTo(_projectOrder.indexOf(b.id)));
-    _scheduleSave();
+    unawaited(_saveNow());
     notifyListeners();
   }
 
@@ -236,7 +263,7 @@ class ProjectRepository extends ChangeNotifier {
     }
     _groupOrder = filtered;
     _groups.sort((a, b) => _groupOrder.indexOf(a.id).compareTo(_groupOrder.indexOf(b.id)));
-    _scheduleSave();
+    unawaited(_saveNow());
     notifyListeners();
   }
 

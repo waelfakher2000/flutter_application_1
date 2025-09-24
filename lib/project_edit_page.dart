@@ -38,6 +38,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
   late TextEditingController _maxController;
   late TextEditingController _multiplierController;
   late TextEditingController _offsetController;
+  late TextEditingController _noiseDeadbandController;
   late TextEditingController _connectedTanksController;
   // Custom formula
   bool _useCustomFormula = false;
@@ -103,6 +104,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
     _maxController = TextEditingController(text: p?.maxThreshold?.toString());
     _multiplierController = TextEditingController(text: p?.multiplier.toString() ?? '1.0');
     _offsetController = TextEditingController(text: p?.offset.toString() ?? '0.0');
+    _noiseDeadbandController = TextEditingController(text: (p?.noiseDeadbandMeters ?? 0.003).toString());
   _connectedTanksController = TextEditingController(text: (p?.connectedTankCount ?? 1).toString());
   _useCustomFormula = p?.useCustomFormula ?? false;
   _customFormulaController = TextEditingController(text: p?.customFormula ?? '');
@@ -150,6 +152,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
     _maxController.dispose();
     _multiplierController.dispose();
     _offsetController.dispose();
+    _noiseDeadbandController.dispose();
     _connectedTanksController.dispose();
   _customFormulaController.dispose();
   _testLevelController.dispose();
@@ -191,6 +194,7 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
         maxThreshold: _maxController.text.isNotEmpty ? double.parse(_maxController.text) : null,
         multiplier: double.tryParse(_multiplierController.text) ?? 1.0,
         offset: double.tryParse(_offsetController.text) ?? 0.0,
+    noiseDeadbandMeters: double.tryParse(_noiseDeadbandController.text.trim()),
   connectedTankCount: int.tryParse(_connectedTanksController.text.trim())?.clamp(1, 1000) ?? 1,
   useCustomFormula: _useCustomFormula,
   customFormula: _customFormulaController.text.trim().isEmpty ? null : _customFormulaController.text.trim(),
@@ -745,6 +749,19 @@ class _ProjectEditPageState extends State<ProjectEditPage> {
                             controller: _offsetController,
                             decoration: dec('Offset', Icons.exposure),
                             keyboardType: TextInputType.number,
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: _noiseDeadbandController,
+                            decoration: dec('Noise deadband (m)', Icons.noise_aware, hint: 'Default 0.003 (3 mm)'),
+                            keyboardType: TextInputType.number,
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) return null; // allow empty → backend default
+                              final d = double.tryParse(value.trim());
+                              if (d == null || d < 0) return 'Enter a number >= 0 (meters)';
+                              if (d > 1.0) return 'Too large; use meters (e.g., 0.003 = 3mm)';
+                              return null;
+                            },
                           ),
                           const SizedBox(height: 12),
                           TextFormField(

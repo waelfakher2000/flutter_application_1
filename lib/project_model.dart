@@ -22,6 +22,8 @@ class Project {
   double? maxThreshold;
   double multiplier;
   double offset;
+  // Per-project noise filter deadband (meters). When null, backend/global default applies.
+  double? noiseDeadbandMeters;
   int connectedTankCount; // number of identical connected tanks sharing same level (>=1)
   // Custom liters formula (user-defined)
   bool useCustomFormula; // when true, use customFormula to compute liters
@@ -81,6 +83,7 @@ class Project {
     this.maxThreshold,
     this.multiplier = 1.0,
     this.offset = 0.0,
+    this.noiseDeadbandMeters,
   this.connectedTankCount = 1,
   this.useCustomFormula = false,
   this.customFormula,
@@ -130,6 +133,7 @@ class Project {
       'maxThreshold': maxThreshold,
       'multiplier': multiplier,
       'offset': offset,
+  'noiseDeadbandMeters': noiseDeadbandMeters,
       'connectedTankCount': connectedTankCount,
   'useCustomFormula': useCustomFormula,
   'customFormula': customFormula,
@@ -180,6 +184,7 @@ class Project {
       maxThreshold: json['maxThreshold']?.toDouble(),
       multiplier: json['multiplier']?.toDouble() ?? 1.0,
       offset: json['offset']?.toDouble() ?? 0.0,
+      noiseDeadbandMeters: (json['noiseDeadbandMeters'] is num) ? (json['noiseDeadbandMeters'] as num).toDouble() : null,
     connectedTankCount: (json['connectedTankCount'] is int)
       ? (json['connectedTankCount'] as int).clamp(1, 1000)
       : int.tryParse('${json['connectedTankCount'] ?? '1'}')?.clamp(1, 1000) ?? 1,
@@ -261,6 +266,7 @@ class Project {
     double? maxThreshold,
     double? multiplier,
     double? offset,
+    double? noiseDeadbandMeters,
   int? connectedTankCount,
     bool? useCustomFormula,
     String? customFormula,
@@ -307,7 +313,8 @@ class Project {
       minThreshold: minThreshold ?? this.minThreshold,
       maxThreshold: maxThreshold ?? this.maxThreshold,
       multiplier: multiplier ?? this.multiplier,
-      offset: offset ?? this.offset,
+    offset: offset ?? this.offset,
+    noiseDeadbandMeters: noiseDeadbandMeters ?? this.noiseDeadbandMeters,
   connectedTankCount: connectedTankCount ?? this.connectedTankCount,
     useCustomFormula: useCustomFormula ?? this.useCustomFormula,
     customFormula: customFormula ?? this.customFormula,

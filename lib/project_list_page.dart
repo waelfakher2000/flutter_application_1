@@ -752,8 +752,18 @@ class _ProjectListPageState extends State<ProjectListPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final Color topBarColor = colorScheme.primary;
+    final Color onTopBarColor = colorScheme.onPrimary;
+    final overlayStyle = ThemeData.estimateBrightnessForColor(topBarColor) == Brightness.dark
+        ? SystemUiOverlayStyle.light
+        : SystemUiOverlayStyle.dark;
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: topBarColor,
+        foregroundColor: onTopBarColor,
+        systemOverlayStyle: overlayStyle,
         title: const Text('Projects'),
         actions: [
           _sortMenu(context),
@@ -782,8 +792,10 @@ class _ProjectListPageState extends State<ProjectListPage> {
             tooltip: 'Logout',
             onPressed: () async {
               final auth = context.read<AuthProvider>();
+              final nav = Navigator.of(context);
               await auth.logout();
-              if (mounted) { Navigator.of(context).pushNamedAndRemoveUntil('/', (r) => false); }
+              if (!mounted) return;
+              nav.pushNamedAndRemoveUntil('/', (r) => false);
             },
           ),
         ],
@@ -793,13 +805,6 @@ class _ProjectListPageState extends State<ProjectListPage> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          FloatingActionButton.extended(
-            heroTag: 'scanQrFab',
-            onPressed: _scanImport,
-            label: const Text('Scan QR'),
-            icon: const Icon(Icons.qr_code_scanner),
-          ),
-          const SizedBox(height: 12),
           FloatingActionButton(
             heroTag: 'addProjectFab',
             onPressed: _addProject,

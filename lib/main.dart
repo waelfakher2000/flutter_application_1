@@ -28,6 +28,17 @@ import 'global_mqtt.dart';
 
 // Local notifications plugin instance
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+// Track processed FCM message IDs to avoid duplicates (foreground/background)
+final Set<String> _seenMessageIds = <String>{};
+void _rememberMessageId(String id) {
+  _seenMessageIds.add(id);
+  // Keep the set bounded
+  if (_seenMessageIds.length > 200) {
+    // Remove an arbitrary 50 oldest by iteration order
+    _seenMessageIds.take(50).toList().forEach(_seenMessageIds.remove);
+  }
+}
+bool _alreadyProcessed(String? id) => id != null && id.isNotEmpty && _seenMessageIds.contains(id);
 
 Future<void> initializeLocalNotifications() async {
   try {
@@ -49,14 +60,20 @@ Future<void> initializeLocalNotifications() async {
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
   final data = message.data;
-  final title = message.notification?.title ?? data['title'] ?? 'Background Notification';
-  final body = message.notification?.body ?? data['body'] ?? (data.isNotEmpty ? data.toString() : '');
-  await showLocalNotification(title: title, body: body);
+  final msgId = data['messageId'] as String?;
+  if (_alreadyProcessed(msgId)) return;
+  if (msgId != null && msgId.isNotEmpty) _rememberMessageId(msgId);
+  final title = data['title'] ?? message.notification?.title ?? 'Background Notification';
+  final body = data['body'] ?? message.notification?.body ?? (data.isNotEmpty ? data.toString() : '');
+  final projectId = data['projectId'] as String?;
+  final notifId = (projectId ?? 'default').hashCode & 0x7fffffff;
+  await showLocalNotification(title: title, body: body, id: notifId);
 }
 
 Future<void> showLocalNotification({
   required String title,
   required String body,
+  int id = 0,
 }) async {
   const AndroidNotificationDetails androidPlatformChannelSpecifics = AndroidNotificationDetails(
     'default_channel',
@@ -70,7 +87,7 @@ Future<void> showLocalNotification({
     android: androidPlatformChannelSpecifics,
   );
   await flutterLocalNotificationsPlugin.show(
-    0,
+    id,
     title,
     body,
     platformChannelSpecifics,
@@ -157,9 +174,14 @@ Future<void> _requestNotificationPermissions() async {
 void setupFCMForegroundListener() {
   FirebaseMessaging.onMessage.listen((RemoteMessage message) {
     final data = message.data;
-    final title = message.notification?.title ?? data['title'] ?? 'Notification';
-    final body = message.notification?.body ?? data['body'] ?? (data.isNotEmpty ? data.toString() : '');
-    showLocalNotification(title: title, body: body);
+    final msgId = data['messageId'] as String?;
+    if (_alreadyProcessed(msgId)) return;
+    if (msgId != null && msgId.isNotEmpty) _rememberMessageId(msgId);
+    final title = data['title'] ?? message.notification?.title ?? 'Notification';
+    final body = data['body'] ?? message.notification?.body ?? (data.isNotEmpty ? data.toString() : '');
+    final projectId = data['projectId'] as String?;
+    final notifId = (projectId ?? 'default').hashCode & 0x7fffffff;
+    showLocalNotification(title: title, body: body, id: notifId);
   });
 }
 
@@ -284,7 +306,7 @@ class _DebugPageState extends State<DebugPage> {
 
   Future<void> _postTestNotification() async {
     try {
-      await showLocalNotification(title: 'Test', body: 'Local test notification');
+      await showLocalNotification(title: 'Test', body: 'Local test notification', id: 'test'.hashCode & 0x7fffffff);
     } catch (e) {
       debugPrint('post notification failed: $e');
     }

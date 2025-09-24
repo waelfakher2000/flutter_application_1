@@ -36,6 +36,16 @@ class AuthProvider extends ChangeNotifier {
         _token = prefs.getString(_kTokenKey);
         _email = _email ?? prefs.getString(_kEmailKey);
         debugPrint('[Auth] fallback SharedPreferences token? ${_token != null}');
+        if (_token != null) {
+          // Mirror back into secure storage so future loads find it in primary location.
+            try {
+              await _storage.write(key: _kTokenKey, value: _token);
+              if (_email != null) await _storage.write(key: _kEmailKey, value: _email);
+              debugPrint('[Auth] mirrored token back to secure storage');
+            } catch (e) {
+              debugPrint('[Auth] mirror to secure storage failed: $e');
+            }
+        }
       } catch (e) {
         debugPrint('[Auth] SharedPreferences fallback error: $e');
       }
@@ -43,6 +53,7 @@ class AuthProvider extends ChangeNotifier {
     if (_token != null) {
       backend.setAuthToken(_token);
       debugPrint('[Auth] backend.setAuthToken applied');
+      _logTokenClaims();
     } else {
       debugPrint('[Auth] No token found on load');
     }
@@ -113,6 +124,7 @@ class AuthProvider extends ChangeNotifier {
           // Mirror to SharedPreferences for resilience
           try { final prefs = await SharedPreferences.getInstance(); await prefs.setString(_kTokenKey, _token!); if (_email != null) await prefs.setString(_kEmailKey, _email!); } catch (_) {}
           backend.setAuthToken(_token); // propagate token
+          _logTokenClaims();
           // Register device token with backend (if FCM available)
           try {
             final fcmToken = await FirebaseMessaging.instance.getToken();
@@ -122,7 +134,7 @@ class AuthProvider extends ChangeNotifier {
                 final uri = Uri.parse(base.endsWith('/') ? '${base}register-device' : '$base/register-device');
                 await http.post(uri, headers: {
                   'Content-Type': 'application/json',
-                  if (_token != null) 'Authorization': 'Bearer ' + _token!,
+                  if (_token != null) 'Authorization': 'Bearer $_token',
                 }, body: jsonEncode({'token': fcmToken}));
               }
             }
@@ -161,12 +173,42 @@ class AuthProvider extends ChangeNotifier {
       final base = await backend.resolveBackendUrl();
       if (base == null || _token == null) return false;
       final uri = Uri.parse(base.endsWith('/') ? '${base}me' : '$base/me');
-      final resp = await http.get(uri, headers: { 'Authorization': 'Bearer ' + _token! });
+  final resp = await http.get(uri, headers: { 'Authorization': 'Bearer $_token' });
       debugPrint('[Auth] /me status=${resp.statusCode}');
-      if (resp.statusCode >= 200 && resp.statusCode < 300) {
-        return true;
+      if (resp.statusCode >= 200 && resp.statusCode < 300) return true;
+      if (resp.statusCode == 401) {
+        debugPrint('[Auth] /me 401 -> token invalid/expired');
+        return false;
       }
-    } catch (_) {}
-    return false;
+      // Non-401 failures (network hiccup, 5xx) are treated as soft valid to avoid logging user out spuriously.
+      debugPrint('[Auth] /me non-401 failure (${resp.statusCode}) -> keeping session');
+      return true;
+    } catch (e) {
+      debugPrint('[Auth] /me exception ($e) -> keeping session');
+      return true; // network error -> keep session
+    }
+  }
+
+  void _logTokenClaims() {
+    if (_token == null) return;
+    try {
+      final parts = _token!.split('.');
+      if (parts.length != 3) return;
+      final payloadB64 = parts[1]
+          .replaceAll('-', '+')
+          .replaceAll('_', '/')
+          .padRight(parts[1].length + (4 - parts[1].length % 4) % 4, '=');
+      final decoded = utf8.decode(base64.decode(payloadB64));
+      final map = jsonDecode(decoded);
+      final exp = map['exp'];
+      if (exp is int) {
+        final expDt = DateTime.fromMillisecondsSinceEpoch(exp * 1000, isUtc: true);
+        final now = DateTime.now().toUtc();
+        final remaining = expDt.difference(now);
+        debugPrint('[Auth] token exp: $expDt (in ${remaining.inHours}h ${remaining.inMinutes % 60}m)');
+      }
+    } catch (e) {
+      debugPrint('[Auth] token decode failed: $e');
+    }
   }
 }

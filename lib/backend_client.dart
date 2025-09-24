@@ -32,6 +32,7 @@ Map<String, dynamic> _toBackendProject(Project p) {
     'storeHistory': p.storeHistory == true,
     'multiplier': p.multiplier,
     'offset': p.offset,
+  'noiseDeadbandMeters': p.noiseDeadbandMeters,
     'sensorType': p.sensorType.toString(),
     'tankType': p.tankType.toString(),
     // Full dimensional and calculation fields
@@ -65,6 +66,9 @@ Map<String, dynamic> _toBackendProject(Project p) {
     'scaleMajorTickMeters': p.scaleMajorTickMeters,
     'scaleMinorDivisions': p.scaleMinorDivisions,
     'createdAt': p.createdAt.toIso8601String(),
+  // Persist raw thresholds for cross-device sync
+  'minThreshold': p.minThreshold,
+  'maxThreshold': p.maxThreshold,
     // Map app thresholds to backend alerts
     'alertsEnabled': alertsEnabled,
     'alertLow': p.minThreshold,
@@ -93,7 +97,7 @@ Future<void> upsertProjectToBackend(Project p) async {
       uri,
       headers: {
         'Content-Type': 'application/json',
-        if (_authToken != null) 'Authorization': 'Bearer ' + _authToken!,
+        if (_authToken != null) 'Authorization': 'Bearer $_authToken',
       },
       body: body,
     );
@@ -122,8 +126,45 @@ Future<void> requestBridgeReload() async {
       return;
     }
     final uri = Uri.parse(base.endsWith('/') ? '${base}bridge/reload' : '$base/bridge/reload');
-    await http.post(uri, headers: { if (_authToken != null) 'Authorization': 'Bearer ' + _authToken! });
-  } catch (_) {}
+    await http.post(uri, headers: { if (_authToken != null) 'Authorization': 'Bearer $_authToken' });
+  } catch (e) {
+    debugPrint('[backend] bridge reload error: $e');
+  }
+}
+
+Map<String, String> _authJsonHeaders() => <String, String>{
+  'Content-Type': 'application/json',
+  if (_authToken != null) 'Authorization': 'Bearer $_authToken',
+};
+
+Future<Map<String, dynamic>> pruneDevices() async {
+  final base = await resolveBackendUrl();
+  if (base == null) throw 'Backend URL not configured';
+  if (_authToken == null) throw 'Not authenticated';
+  final url = base.endsWith('/') ? '${base}devices/prune' : '$base/devices/prune';
+  final resp = await http.post(Uri.parse(url), headers: _authJsonHeaders(), body: jsonEncode({}));
+  if (resp.statusCode == 401 && _onUnauthorized != null) { _onUnauthorized!(); }
+  if (resp.statusCode < 200 || resp.statusCode >= 300) {
+    throw 'Request failed (${resp.statusCode})';
+  }
+  final data = jsonDecode(resp.body) as Map<String, dynamic>;
+  if (data['ok'] != true) throw 'Malformed response';
+  return data;
+}
+
+Future<List<dynamic>> listDevices() async {
+  final base = await resolveBackendUrl();
+  if (base == null) throw 'Backend URL not configured';
+  if (_authToken == null) throw 'Not authenticated';
+  final url = base.endsWith('/') ? '${base}devices' : '$base/devices';
+  final resp = await http.get(Uri.parse(url), headers: _authJsonHeaders());
+  if (resp.statusCode == 401 && _onUnauthorized != null) { _onUnauthorized!(); }
+  if (resp.statusCode < 200 || resp.statusCode >= 300) {
+    throw 'Request failed (${resp.statusCode})';
+  }
+  final data = jsonDecode(resp.body) as Map<String, dynamic>;
+  if (data['ok'] != true) throw 'Malformed response';
+  return (data['items'] as List?) ?? [];
 }
 
 String? _authToken; // set by Auth integration
@@ -134,7 +175,7 @@ void setOnUnauthorized(VoidCallback? cb) { _onUnauthorized = cb; }
 Future<http.Response> httpGet(Uri uri) async {
   final headers = <String, String>{
     'Accept': 'application/json',
-    if (_authToken != null) 'Authorization': 'Bearer ' + _authToken!,
+  if (_authToken != null) 'Authorization': 'Bearer $_authToken',
   };
   final resp = await http.get(uri, headers: headers);
   if (resp.statusCode == 401 && _onUnauthorized != null) { _onUnauthorized!(); }
@@ -188,7 +229,7 @@ Future<void> deleteProjectFromBackend(String id) async {
     if (base == null || base.isEmpty) return;
     final uri = Uri.parse(base.endsWith('/') ? '${base}projects/$id' : '$base/projects/$id');
     final headers = <String, String>{
-      if (_authToken != null) 'Authorization': 'Bearer ' + _authToken!,
+  if (_authToken != null) 'Authorization': 'Bearer $_authToken',
     };
     final resp = await http.delete(uri, headers: headers);
     if (resp.statusCode == 401 && _onUnauthorized != null) { _onUnauthorized!(); }

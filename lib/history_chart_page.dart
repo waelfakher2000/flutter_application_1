@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:io' show File; // non-web file save
 import 'package:path_provider/path_provider.dart';
@@ -29,6 +30,7 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
   ReadingPoint? _tooltipPoint;
   final GlobalKey _chartKey = GlobalKey();
   int? _selectedIndex; // index of selected point for crosshair
+  String? _quickRangeKey; // '6h','24h','3d','7d','30d','custom'
 
   // (Zoom removed) Always derive bounds from _points when rendering.
 
@@ -63,7 +65,25 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
     if (end.isBefore(start)) {
       final tmp = start; start = end; end = tmp; // swap
     }
-    setState(() => _range = DateTimeRange(start: start, end: end));
+    setState(() {
+      _range = DateTimeRange(start: start, end: end);
+      _quickRangeKey = 'custom';
+    });
+    _load();
+  }
+
+  void _applyQuickRange(String key) {
+    final now = DateTime.now();
+    DateTimeRange? r;
+    switch (key) {
+      case '6h': r = DateTimeRange(start: now.subtract(const Duration(hours: 6)), end: now); break;
+      case '24h': r = DateTimeRange(start: now.subtract(const Duration(hours: 24)), end: now); break;
+      case '3d': r = DateTimeRange(start: now.subtract(const Duration(days: 3)), end: now); break;
+      case '7d': r = DateTimeRange(start: now.subtract(const Duration(days: 7)), end: now); break;
+      case '30d': r = DateTimeRange(start: now.subtract(const Duration(days: 30)), end: now); break;
+      default: r = null;
+    }
+    setState(() { _range = r; _quickRangeKey = key; });
     _load();
   }
 
@@ -112,13 +132,13 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
 
   @override
   Widget build(BuildContext context) {
-    final chart = _loading
-        ? const Center(child: CircularProgressIndicator())
-        : _error != null
-            ? Center(child: Text(_error!))
-            : _points.isEmpty
-                ? const Center(child: Text('No readings'))
-                : HistoryChart(
+  final chart = _loading
+    ? const Center(child: CircularProgressIndicator())
+    : _error != null
+      ? Center(child: _ErrorState(message: _error!, unauthorized: _error!.toLowerCase().startsWith('unauthorized'), onBack: () => Navigator.of(context).pop()))
+      : _points.isEmpty
+        ? const _EmptyState()
+        : HistoryChart(
         key: _chartKey,
         points: _points,
         xLabel: 'Time',
@@ -130,26 +150,22 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
     final bodyWidget = _loading
         ? const Center(child: CircularProgressIndicator())
         : _error != null
-            ? Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(_error!, textAlign: TextAlign.center),
-                    if (unauthorized) ...[
-                      const SizedBox(height: 12),
-                      ElevatedButton(
-                        onPressed: () { Navigator.of(context).pop(); },
-                        child: const Text('Back to Projects'),
-                      ),
-                    ]
-                  ],
-                ),
-              )
+            ? Center(child: _ErrorState(message: _error!, unauthorized: unauthorized, onBack: () => Navigator.of(context).pop()))
             : _points.isEmpty
-                ? const Center(child: Text('No readings'))
+                ? const _EmptyState()
                 : _buildChartContainer(chart);
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final topBarColor = scheme.primary;
+    final onTopBar = scheme.onPrimary;
+    final overlayStyle = ThemeData.estimateBrightnessForColor(topBarColor) == Brightness.dark
+        ? SystemUiOverlayStyle.light
+        : SystemUiOverlayStyle.dark;
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: topBarColor,
+        foregroundColor: onTopBar,
+        systemOverlayStyle: overlayStyle,
         title: Text('History - ${widget.project.name}'),
         actions: [
           if (!_loading && _points.isNotEmpty)
@@ -166,7 +182,23 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
         ],
       ),
-      body: bodyWidget,
+      body: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        child: Column(
+          key: ValueKey('${_loading}_${_error != null}_${_points.length}_${_range?.start}_${_range?.end}')
+          ,
+          children: [
+            _QuickRangeChips(
+              selected: _quickRangeKey,
+              onSelect: (k) => k == 'custom' ? _pickRange() : _applyQuickRange(k),
+              onClear: () { setState(() { _range = null; _quickRangeKey = null; }); _load(); },
+            ),
+            Expanded(child: bodyWidget),
+          ],
+        ),
+      ),
     );
   }
 
@@ -424,6 +456,82 @@ class _HistoryChartPageState extends State<HistoryChartPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Export failed: $e')));
     }
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(Icons.show_chart, size: 48, color: theme.hintColor),
+        const SizedBox(height: 12),
+        Text('No readings', style: theme.textTheme.titleMedium),
+        const SizedBox(height: 6),
+        Text('Try expanding the interval or check your device is sending data.',
+            textAlign: TextAlign.center, style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor)),
+      ],
+    );
+  }
+}
+
+class _ErrorState extends StatelessWidget {
+  final String message; final bool unauthorized; final VoidCallback onBack;
+  const _ErrorState({required this.message, required this.unauthorized, required this.onBack});
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(Icons.error_outline, size: 48, color: theme.colorScheme.error),
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+          child: Text(message, textAlign: TextAlign.center),
+        ),
+        if (unauthorized) ...[
+          const SizedBox(height: 12),
+          ElevatedButton(onPressed: onBack, child: const Text('Back to Projects')),
+        ]
+      ],
+    );
+  }
+}
+
+class _QuickRangeChips extends StatelessWidget {
+  final String? selected; final void Function(String key) onSelect; final VoidCallback onClear;
+  const _QuickRangeChips({required this.selected, required this.onSelect, required this.onClear});
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    Chip chip(String key, String label) => Chip(
+      label: Text(label),
+      backgroundColor: selected == key ? theme.colorScheme.primary.withValues(alpha: 0.15) : null,
+      side: selected == key ? BorderSide(color: theme.colorScheme.primary) : null,
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          ActionChip(label: chip('6h','6h').label, avatar: const Icon(Icons.schedule, size: 18), onPressed: () => onSelect('6h')),
+          ActionChip(label: chip('24h','24h').label, onPressed: () => onSelect('24h')),
+          ActionChip(label: chip('3d','3d').label, onPressed: () => onSelect('3d')),
+          ActionChip(label: chip('7d','7d').label, onPressed: () => onSelect('7d')),
+          ActionChip(label: chip('30d','30d').label, onPressed: () => onSelect('30d')),
+          ActionChip(label: const Text('Custom…'), onPressed: () => onSelect('custom')),
+          const SizedBox(width: 8),
+          if (selected != null)
+            TextButton.icon(onPressed: onClear, icon: const Icon(Icons.clear), label: const Text('Clear')),
+        ],
+      ),
+    );
   }
 }
 
